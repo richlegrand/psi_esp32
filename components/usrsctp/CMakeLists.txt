@@ -1,43 +1,41 @@
 # ESP32-P4 usrsctp component
 
-set(USRSCTP_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../libdatachannel/deps/usrsctp/usrsctplib)
-
 # usrsctp source files (core userland SCTP implementation)
 set(SOURCES
-    ${USRSCTP_ROOT}/netinet/sctp_asconf.c
-    ${USRSCTP_ROOT}/netinet/sctp_auth.c
-    ${USRSCTP_ROOT}/netinet/sctp_bsd_addr.c
-    ${USRSCTP_ROOT}/netinet/sctp_callout.c
-    ${USRSCTP_ROOT}/netinet/sctp_cc_functions.c
-    ${USRSCTP_ROOT}/netinet/sctp_crc32.c
-    ${USRSCTP_ROOT}/netinet/sctp_indata.c
-    ${USRSCTP_ROOT}/netinet/sctp_input.c
-    ${USRSCTP_ROOT}/netinet/sctp_output.c
-    ${USRSCTP_ROOT}/netinet/sctp_pcb.c
-    ${USRSCTP_ROOT}/netinet/sctp_peeloff.c
-    ${USRSCTP_ROOT}/netinet/sctp_sha1.c
-    ${USRSCTP_ROOT}/netinet/sctp_ss_functions.c
-    ${USRSCTP_ROOT}/netinet/sctp_sysctl.c
-    ${USRSCTP_ROOT}/netinet/sctp_timer.c
-    ${USRSCTP_ROOT}/netinet/sctp_userspace.c
-    ${USRSCTP_ROOT}/netinet/sctp_usrreq.c
-    ${USRSCTP_ROOT}/netinet/sctputil.c
-    ${USRSCTP_ROOT}/netinet6/sctp6_usrreq.c
-    ${USRSCTP_ROOT}/user_environment.c
-    ${USRSCTP_ROOT}/user_mbuf.c
-    ${USRSCTP_ROOT}/user_recv_thread.c
-    ${USRSCTP_ROOT}/user_socket.c
+    src/netinet/sctp_asconf.c
+    src/netinet/sctp_auth.c
+    src/netinet/sctp_bsd_addr.c
+    src/netinet/sctp_callout.c
+    src/netinet/sctp_cc_functions.c
+    src/netinet/sctp_crc32.c
+    src/netinet/sctp_indata.c
+    src/netinet/sctp_input.c
+    src/netinet/sctp_output.c
+    src/netinet/sctp_pcb.c
+    src/netinet/sctp_peeloff.c
+    src/netinet/sctp_sha1.c
+    src/netinet/sctp_ss_functions.c
+    src/netinet/sctp_sysctl.c
+    src/netinet/sctp_timer.c
+    src/netinet/sctp_userspace.c
+    src/netinet/sctp_usrreq.c
+    src/netinet/sctputil.c
+    src/netinet6/sctp6_usrreq.c
+    src/user_environment.c
+    src/user_mbuf.c
+    src/user_recv_thread.c
+    src/user_socket.c
 )
 
 # ESP32 component registration
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS 
-        ${USRSCTP_ROOT}
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        src
+        include
     PRIV_INCLUDE_DIRS
-        ${USRSCTP_ROOT}/netinet
-        ${USRSCTP_ROOT}/netinet6
+        src/netinet
+        src/netinet6
     REQUIRES 
         lwip
         pthread

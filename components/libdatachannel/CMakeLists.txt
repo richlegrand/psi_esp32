@@ -1,22 +1,20 @@
 # ESP32-P4 libdatachannel component
 
-set(LIBDATACHANNEL_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../libdatachannel)
-
 # Source files for minimal build
 set(SOURCES
     # Core implementation files
-    ${LIBDATACHANNEL_ROOT}/src/impl/init.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/certificate.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/channel.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/datachannel.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/dtlstransport.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/icetransport.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/peerconnection.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/processor.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/sctptransport.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/transport.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/utils.cpp
-    ${LIBDATACHANNEL_ROOT}/src/impl/logcounter.cpp
+    src/impl/init.cpp
+    src/impl/certificate.cpp
+    src/impl/channel.cpp
+    src/impl/datachannel.cpp
+    src/impl/dtlstransport.cpp
+    src/impl/icetransport.cpp
+    src/impl/peerconnection.cpp
+    src/impl/processor.cpp
+    src/impl/sctptransport.cpp
+    src/impl/transport.cpp
+    src/impl/utils.cpp
+    src/impl/logcounter.cpp
     
     # ESP32 adaptations
     psram_allocator.cpp
@@ -25,25 +23,24 @@ set(SOURCES
     esp32_random.cpp
     
     # Public API
-    ${LIBDATACHANNEL_ROOT}/src/candidate.cpp
-    ${LIBDATACHANNEL_ROOT}/src/channel.cpp
-    ${LIBDATACHANNEL_ROOT}/src/configuration.cpp
-    ${LIBDATACHANNEL_ROOT}/src/datachannel.cpp
-    ${LIBDATACHANNEL_ROOT}/src/description.cpp
-    ${LIBDATACHANNEL_ROOT}/src/message.cpp
-    ${LIBDATACHANNEL_ROOT}/src/peerconnection.cpp
-    ${LIBDATACHANNEL_ROOT}/src/reliability.cpp
+    src/candidate.cpp
+    src/channel.cpp
+    src/configuration.cpp
+    src/datachannel.cpp
+    src/description.cpp
+    src/message.cpp
+    src/peerconnection.cpp
+    src/global.cpp
 )
 
 # ESP32 component registration
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS 
-        ${LIBDATACHANNEL_ROOT}/include
-        ${LIBDATACHANNEL_ROOT}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        include
+        src
     PRIV_INCLUDE_DIRS
-        ${LIBDATACHANNEL_ROOT}/src/impl
+        src/impl
     REQUIRES 
         pthread
         mbedtls

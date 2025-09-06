@@ -1,33 +1,30 @@
 # ESP32-P4 libjuice component
 
-set(LIBJUICE_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/../../../libdatachannel/deps/libjuice)
-
 # libjuice source files
 set(SOURCES
-    ${LIBJUICE_ROOT}/src/addr.c
-    ${LIBJUICE_ROOT}/src/agent.c
-    ${LIBJUICE_ROOT}/src/crc32.c
-    ${LIBJUICE_ROOT}/src/hash.c
-    ${LIBJUICE_ROOT}/src/hmac.c
-    ${LIBJUICE_ROOT}/src/ice.c
-    ${LIBJUICE_ROOT}/src/juice.c
-    ${LIBJUICE_ROOT}/src/log.c
-    ${LIBJUICE_ROOT}/src/random.c
-    ${LIBJUICE_ROOT}/src/server.c
-    ${LIBJUICE_ROOT}/src/stun.c
-    ${LIBJUICE_ROOT}/src/timestamp.c
-    ${LIBJUICE_ROOT}/src/turn.c
-    ${LIBJUICE_ROOT}/src/udp.c
+    src/addr.c
+    src/agent.c
+    src/crc32.c
+    src/hash.c
+    src/hmac.c
+    src/ice.c
+    src/juice.c
+    src/log.c
+    src/random.c
+    src/server.c
+    src/stun.c
+    src/timestamp.c
+    src/turn.c
+    src/udp.c
 )
 
 # ESP32 component registration
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS 
-        ${LIBJUICE_ROOT}/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        include
     PRIV_INCLUDE_DIRS
-        ${LIBJUICE_ROOT}/src
+        src
     REQUIRES 
         lwip
         pthread
