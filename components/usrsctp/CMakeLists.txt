@@ -45,9 +45,21 @@ idf_component_register(
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     __Userspace__=1
     __Userspace_os_Linux=1
+    # Network protocol support
+    INET=1
+    INET6=1
+    # Socket address length fields (ESP32/LWIP has all length fields)
+    HAVE_SA_LEN=1
+    HAVE_SIN_LEN=1  
+    HAVE_SIN6_LEN=1
+    # SCTP configuration for embedded
     SCTP_SIMPLE_ALLOCATOR=1
     SCTP_PROCESS_LEVEL_LOCKS=1
     SCTP_DEBUG=1
+    # Prevent conflicts with LWIP definitions
+    HAVE_STRUCT_IOVEC=1
+    # Platform identification - use __native_client__ to exclude problematic includes
+    __native_client__=1
     ESP32_PORT=1
     _GNU_SOURCE=1
 )
