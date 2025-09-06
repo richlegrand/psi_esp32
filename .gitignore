@@ -1,0 +1,17 @@
+# ESP-IDF build artifacts
+build/
+sdkconfig
+sdkconfig.old
+*.pyc
+
+# Editor artifacts
+.vscode/
+*.swp
+*~
+.DS_Store
+
+# Generated files
+dependencies.lock
+
+# Log files
+*.log
