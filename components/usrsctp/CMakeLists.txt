@@ -25,6 +25,8 @@ set(SOURCES
     src/user_mbuf.c
     src/user_recv_thread.c
     src/user_socket.c
+    # ESP32 compatibility functions
+    esp32_compat.c
 )
 
 # ESP32 component registration
@@ -45,6 +47,9 @@ idf_component_register(
 target_compile_definitions(${COMPONENT_LIB} PRIVATE
     __Userspace__=1
     __Userspace_os_Linux=1
+    # ESP32 as Linux-compatible userspace client
+    __linux__=1
+    __native_client__=1
     # Network protocol support
     INET=1
     INET6=1
@@ -58,8 +63,7 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     SCTP_DEBUG=1
     # Prevent conflicts with LWIP definitions
     HAVE_STRUCT_IOVEC=1
-    # Platform identification - use __native_client__ to exclude problematic includes
-    __native_client__=1
+    # Platform identification for ESP32
     ESP32_PORT=1
     _GNU_SOURCE=1
 )
@@ -81,4 +85,5 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-address-of-packed-member
     -Wno-format-truncation
     -Wno-implicit-fallthrough
+    -Wno-format
 )

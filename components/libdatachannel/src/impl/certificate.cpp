@@ -12,6 +12,9 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
+#ifdef ESP32_PORT
+#include <cstring>  // ESP32: needed for memset
+#endif
 #include <iomanip>
 #include <mutex>
 #include <sstream>
@@ -314,8 +317,15 @@ Certificate Certificate::Generate(CertificateType type, const string &commonName
 		               "Failed to generate certificate");
 
 		std::string name = std::string("O=" + commonName + ",CN=" + commonName);
+
+#ifdef ESP32_PORT
+		// ESP32: Use non-deprecated API since deprecated functions are removed
+		mbedtls::check(mbedtls_x509write_crt_set_serial_raw(&wcrt, serialBuffer, serialBufferSize),
+		               "Failed to generate certificate");
+#else
 		mbedtls::check(mbedtls_x509write_crt_set_serial(&wcrt, &serial),
 		               "Failed to generate certificate");
+#endif
 		mbedtls::check(mbedtls_x509write_crt_set_subject_name(&wcrt, name.c_str()),
 		               "Failed to generate certificate");
 		mbedtls::check(mbedtls_x509write_crt_set_issuer_name(&wcrt, name.c_str()),
@@ -331,7 +341,11 @@ Certificate Certificate::Generate(CertificateType type, const string &commonName
 
 		const size_t certificateBufferSize = 4096;
 		unsigned char certificateBuffer[certificateBufferSize];
+#ifdef ESP32_PORT
+		memset(certificateBuffer, 0, certificateBufferSize);  // ESP32: memset is in global namespace
+#else
 		std::memset(certificateBuffer, 0, certificateBufferSize);
+#endif
 
 		auto certificateLen = mbedtls_x509write_crt_der(
 		    &wcrt, certificateBuffer, certificateBufferSize, mbedtls_ctr_drbg_random, &drbg);

@@ -1,79 +1,209 @@
+//////////////////////////////////////////////////////////////////////////
+//  Plog - portable and simple log for C++
+//  Documentation and sources: https://github.com/SergiusTheBest/plog
+//  License: MIT, https://choosealicense.com/licenses/mit
+
 #pragma once
+#include <plog/Logger.h>
 
-// plog to ESP-IDF logging compatibility layer
-#include <esp_log.h>
-#include <sstream>
+//////////////////////////////////////////////////////////////////////////
+// Helper macros that get context info
 
-// Define the logging tag for libdatachannel
-#define PLOG_DEFAULT_TAG "libdatachannel"
+#if defined(PLOG_ENABLE_GET_THIS) && defined(_MSC_VER) && _MSC_VER >= 1600 && !defined(__INTELLISENSE__) && !defined(__INTEL_COMPILER) && !defined(__llvm__) && !defined(__RESHARPER__) // >= Visual Studio 2010, skip IntelliSense, Intel Compiler, Clang Code Model and ReSharper
+#   define PLOG_GET_THIS()      __if_exists(this) { this } __if_not_exists(this) { 0 }
+#else
+#   define PLOG_GET_THIS()      reinterpret_cast<void*>(0)
+#endif
 
-// Stream-to-string helper class
-class PlogStream {
-private:
-    std::ostringstream oss;
-    const char* tag;
-    esp_log_level_t level;
-    
-public:
-    PlogStream(const char* t, esp_log_level_t l) : tag(t), level(l) {}
-    
-    template<typename T>
-    PlogStream& operator<<(const T& value) {
-        oss << value;
-        return *this;
-    }
-    
-    ~PlogStream() {
-        switch(level) {
-            case ESP_LOG_ERROR:   ESP_LOGE(tag, "%s", oss.str().c_str()); break;
-            case ESP_LOG_WARN:    ESP_LOGW(tag, "%s", oss.str().c_str()); break;
-            case ESP_LOG_INFO:    ESP_LOGI(tag, "%s", oss.str().c_str()); break;
-            case ESP_LOG_DEBUG:   ESP_LOGD(tag, "%s", oss.str().c_str()); break;
-            case ESP_LOG_VERBOSE: ESP_LOGV(tag, "%s", oss.str().c_str()); break;
-        }
-    }
-};
+#ifdef _MSC_VER
+#   define PLOG_GET_FUNC()      __FUNCTION__
+#elif defined(__BORLANDC__)
+#   define PLOG_GET_FUNC()      __FUNC__
+#else
+#   define PLOG_GET_FUNC()      __PRETTY_FUNCTION__
+#endif
 
-// plog compatibility macros
-#define PLOG_FATAL    PlogStream(PLOG_DEFAULT_TAG, ESP_LOG_ERROR)
-#define PLOG_ERROR    PlogStream(PLOG_DEFAULT_TAG, ESP_LOG_ERROR)
-#define PLOG_WARNING  PlogStream(PLOG_DEFAULT_TAG, ESP_LOG_WARN)
-#define PLOG_INFO     PlogStream(PLOG_DEFAULT_TAG, ESP_LOG_INFO)
-#define PLOG_DEBUG    PlogStream(PLOG_DEFAULT_TAG, ESP_LOG_DEBUG)
-#define PLOG_VERBOSE  PlogStream(PLOG_DEFAULT_TAG, ESP_LOG_VERBOSE)
+#ifdef PLOG_CAPTURE_FILE
+#   define PLOG_GET_FILE()      __FILE__
+#else
+#   define PLOG_GET_FILE()      ""
+#endif
 
-// Alternative IF variants (used by some plog code)
-#define PLOG_FATAL_IF(cond)    if(cond) PLOG_FATAL
-#define PLOG_ERROR_IF(cond)    if(cond) PLOG_ERROR
-#define PLOG_WARNING_IF(cond)  if(cond) PLOG_WARNING
-#define PLOG_INFO_IF(cond)     if(cond) PLOG_INFO
-#define PLOG_DEBUG_IF(cond)    if(cond) PLOG_DEBUG
-#define PLOG_VERBOSE_IF(cond)  if(cond) PLOG_VERBOSE
+//////////////////////////////////////////////////////////////////////////
+// Log severity level checker
 
-// Logging levels for compatibility
-enum plog_severity {
-    PLOG_SEVERITY_FATAL = 0,
-    PLOG_SEVERITY_ERROR = 1,
-    PLOG_SEVERITY_WARNING = 2,
-    PLOG_SEVERITY_INFO = 3,
-    PLOG_SEVERITY_DEBUG = 4,
-    PLOG_SEVERITY_VERBOSE = 5
-};
+#ifdef PLOG_DISABLE_LOGGING
+#   ifdef _MSC_VER
+#       define IF_PLOG_(instanceId, severity)  __pragma(warning(push)) __pragma(warning(disable:4127)) if (true) {;} else __pragma(warning(pop)) // conditional expression is constant
+#   else
+#       define IF_PLOG_(instanceId, severity)   if (true) {;} else
+#   endif
+#else
+#   define IF_PLOG_(instanceId, severity)   if (!plog::get<instanceId>() || !plog::get<instanceId>()->checkSeverity(severity)) {;} else
+#endif
 
-// Initialize function (no-op for ESP-IDF)
-inline void plog_init(int severity = PLOG_SEVERITY_DEBUG) {
-    // ESP-IDF logging is initialized by the system
-}
+#define IF_PLOG(severity)                IF_PLOG_(PLOG_DEFAULT_INSTANCE_ID, severity)
 
-// Instance-based logging (if libdatachannel uses specific loggers)
-template<int instance = 0>
-class Logger {
-public:
-    static PlogStream write(esp_log_level_t level) {
-        return PlogStream(PLOG_DEFAULT_TAG, level);
-    }
-};
+//////////////////////////////////////////////////////////////////////////
+// Main logging macros
 
-// Common plog macros that might be used
-#define PLOG(severity) PlogStream(PLOG_DEFAULT_TAG, (esp_log_level_t)(ESP_LOG_ERROR + severity - PLOG_SEVERITY_ERROR))
-#define PLOG_(instance, severity) PlogStream(PLOG_DEFAULT_TAG, (esp_log_level_t)(ESP_LOG_ERROR + severity - PLOG_SEVERITY_ERROR))
+#ifdef PLOG_MESSAGE_PREFIX
+#   define PLOG_PRINT_MESSAGE_PREFIX()    << PLOG_MESSAGE_PREFIX
+#else
+#   define PLOG_PRINT_MESSAGE_PREFIX()
+#endif
+
+#define PLOG_(instanceId, severity)      IF_PLOG_(instanceId, severity) (*plog::get<instanceId>()) += \
+    plog::Record(severity, PLOG_GET_FUNC(), __LINE__, PLOG_GET_FILE(), PLOG_GET_THIS(), instanceId).ref() PLOG_PRINT_MESSAGE_PREFIX()
+#define PLOG(severity)                   PLOG_(PLOG_DEFAULT_INSTANCE_ID, severity)
+
+#define PLOG_VERBOSE                     PLOG(plog::verbose)
+#define PLOG_DEBUG                       PLOG(plog::debug)
+#define PLOG_INFO                        PLOG(plog::info)
+#define PLOG_WARNING                     PLOG(plog::warning)
+#define PLOG_ERROR                       PLOG(plog::error)
+#define PLOG_FATAL                       PLOG(plog::fatal)
+#define PLOG_NONE                        PLOG(plog::none)
+
+#define PLOG_VERBOSE_(instanceId)        PLOG_(instanceId, plog::verbose)
+#define PLOG_DEBUG_(instanceId)          PLOG_(instanceId, plog::debug)
+#define PLOG_INFO_(instanceId)           PLOG_(instanceId, plog::info)
+#define PLOG_WARNING_(instanceId)        PLOG_(instanceId, plog::warning)
+#define PLOG_ERROR_(instanceId)          PLOG_(instanceId, plog::error)
+#define PLOG_FATAL_(instanceId)          PLOG_(instanceId, plog::fatal)
+#define PLOG_NONE_(instanceId)           PLOG_(instanceId, plog::none)
+
+#define PLOGV                            PLOG_VERBOSE
+#define PLOGD                            PLOG_DEBUG
+#define PLOGI                            PLOG_INFO
+#define PLOGW                            PLOG_WARNING
+#define PLOGE                            PLOG_ERROR
+#define PLOGF                            PLOG_FATAL
+#define PLOGN                            PLOG_NONE
+
+#define PLOGV_(instanceId)               PLOG_VERBOSE_(instanceId)
+#define PLOGD_(instanceId)               PLOG_DEBUG_(instanceId)
+#define PLOGI_(instanceId)               PLOG_INFO_(instanceId)
+#define PLOGW_(instanceId)               PLOG_WARNING_(instanceId)
+#define PLOGE_(instanceId)               PLOG_ERROR_(instanceId)
+#define PLOGF_(instanceId)               PLOG_FATAL_(instanceId)
+#define PLOGN_(instanceId)               PLOG_NONE_(instanceId)
+
+//////////////////////////////////////////////////////////////////////////
+// Conditional logging macros
+
+#define PLOG_IF_(instanceId, severity, condition)  if (!(condition)) {;} else PLOG_(instanceId, severity)
+#define PLOG_IF(severity, condition)               PLOG_IF_(PLOG_DEFAULT_INSTANCE_ID, severity, condition)
+
+#define PLOG_VERBOSE_IF(condition)               PLOG_IF(plog::verbose, condition)
+#define PLOG_DEBUG_IF(condition)                 PLOG_IF(plog::debug, condition)
+#define PLOG_INFO_IF(condition)                  PLOG_IF(plog::info, condition)
+#define PLOG_WARNING_IF(condition)               PLOG_IF(plog::warning, condition)
+#define PLOG_ERROR_IF(condition)                 PLOG_IF(plog::error, condition)
+#define PLOG_FATAL_IF(condition)                 PLOG_IF(plog::fatal, condition)
+#define PLOG_NONE_IF(condition)                  PLOG_IF(plog::none, condition)
+
+#define PLOG_VERBOSE_IF_(instanceId, condition)  PLOG_IF_(instanceId, plog::verbose, condition)
+#define PLOG_DEBUG_IF_(instanceId, condition)    PLOG_IF_(instanceId, plog::debug, condition)
+#define PLOG_INFO_IF_(instanceId, condition)     PLOG_IF_(instanceId, plog::info, condition)
+#define PLOG_WARNING_IF_(instanceId, condition)  PLOG_IF_(instanceId, plog::warning, condition)
+#define PLOG_ERROR_IF_(instanceId, condition)    PLOG_IF_(instanceId, plog::error, condition)
+#define PLOG_FATAL_IF_(instanceId, condition)    PLOG_IF_(instanceId, plog::fatal, condition)
+#define PLOG_NONE_IF_(instanceId, condition)     PLOG_IF_(instanceId, plog::none, condition)
+
+#define PLOGV_IF(condition)                      PLOG_VERBOSE_IF(condition)
+#define PLOGD_IF(condition)                      PLOG_DEBUG_IF(condition)
+#define PLOGI_IF(condition)                      PLOG_INFO_IF(condition)
+#define PLOGW_IF(condition)                      PLOG_WARNING_IF(condition)
+#define PLOGE_IF(condition)                      PLOG_ERROR_IF(condition)
+#define PLOGF_IF(condition)                      PLOG_FATAL_IF(condition)
+#define PLOGN_IF(condition)                      PLOG_NONE_IF(condition)
+
+#define PLOGV_IF_(instanceId, condition)         PLOG_VERBOSE_IF_(instanceId, condition)
+#define PLOGD_IF_(instanceId, condition)         PLOG_DEBUG_IF_(instanceId, condition)
+#define PLOGI_IF_(instanceId, condition)         PLOG_INFO_IF_(instanceId, condition)
+#define PLOGW_IF_(instanceId, condition)         PLOG_WARNING_IF_(instanceId, condition)
+#define PLOGE_IF_(instanceId, condition)         PLOG_ERROR_IF_(instanceId, condition)
+#define PLOGF_IF_(instanceId, condition)         PLOG_FATAL_IF_(instanceId, condition)
+#define PLOGN_IF_(instanceId, condition)         PLOG_NONE_IF_(instanceId, condition)
+
+// Old macro names for downward compatibility. To bypass including these macro names, add
+// #define PLOG_OMIT_LOG_DEFINES before #include <plog/Log.h>
+#ifndef PLOG_OMIT_LOG_DEFINES
+
+//////////////////////////////////////////////////////////////////////////
+// Main logging macros - can be changed later to point at macros for a different logging package
+
+#define LOG_(instanceId, severity)      PLOG_(instanceId, severity)
+#define LOG(severity)                   PLOG(severity)
+
+#define LOG_VERBOSE                     PLOG_VERBOSE
+#define LOG_DEBUG                       PLOG_DEBUG
+#define LOG_INFO                        PLOG_INFO
+#define LOG_WARNING                     PLOG_WARNING
+#define LOG_ERROR                       PLOG_ERROR
+#define LOG_FATAL                       PLOG_FATAL
+#define LOG_NONE                        PLOG_NONE
+
+#define LOG_VERBOSE_(instanceId)        PLOG_VERBOSE_(instanceId)
+#define LOG_DEBUG_(instanceId)          PLOG_DEBUG_(instanceId)
+#define LOG_INFO_(instanceId)           PLOG_INFO_(instanceId)
+#define LOG_WARNING_(instanceId)        PLOG_WARNING_(instanceId)
+#define LOG_ERROR_(instanceId)          PLOG_ERROR_(instanceId)
+#define LOG_FATAL_(instanceId)          PLOG_FATAL_(instanceId)
+#define LOG_NONE_(instanceId)           PLOG_NONE_(instanceId)
+
+#define LOGV                            PLOGV
+#define LOGD                            PLOGD
+#define LOGI                            PLOGI
+#define LOGW                            PLOGW
+#define LOGE                            PLOGE
+#define LOGF                            PLOGF
+#define LOGN                            PLOGN
+
+#define LOGV_(instanceId)               PLOGV_(instanceId)
+#define LOGD_(instanceId)               PLOGD_(instanceId)
+#define LOGI_(instanceId)               PLOGI_(instanceId)
+#define LOGW_(instanceId)               PLOGW_(instanceId)
+#define LOGE_(instanceId)               PLOGE_(instanceId)
+#define LOGF_(instanceId)               PLOGF_(instanceId)
+#define LOGN_(instanceId)               PLOGN_(instanceId)
+
+//////////////////////////////////////////////////////////////////////////
+// Conditional logging macros
+
+#define LOG_IF_(instanceId, severity, condition)  PLOG_IF_(instanceId, severity, condition)
+#define LOG_IF(severity, condition)               PLOG_IF(severity, condition)
+
+#define LOG_VERBOSE_IF(condition)               PLOG_VERBOSE_IF(condition)
+#define LOG_DEBUG_IF(condition)                 PLOG_DEBUG_IF(condition)
+#define LOG_INFO_IF(condition)                  PLOG_INFO_IF(condition)
+#define LOG_WARNING_IF(condition)               PLOG_WARNING_IF(condition)
+#define LOG_ERROR_IF(condition)                 PLOG_ERROR_IF(condition)
+#define LOG_FATAL_IF(condition)                 PLOG_FATAL_IF(condition)
+#define LOG_NONE_IF(condition)                  PLOG_NONE_IF(condition)
+
+#define LOG_VERBOSE_IF_(instanceId, condition)  PLOG_VERBOSE_IF_(instanceId, condition)
+#define LOG_DEBUG_IF_(instanceId, condition)    PLOG_DEBUG_IF_(instanceId, condition)
+#define LOG_INFO_IF_(instanceId, condition)     PLOG_INFO_IF_(instanceId, condition)
+#define LOG_WARNING_IF_(instanceId, condition)  PLOG_WARNING_IF_(instanceId, condition)
+#define LOG_ERROR_IF_(instanceId, condition)    PLOG_ERROR_IF_(instanceId, condition)
+#define LOG_FATAL_IF_(instanceId, condition)    PLOG_FATAL_IF_(instanceId, condition)
+#define LOG_NONE_IF_(instanceId, condition)     PLOG_NONE_IF_(instanceId, condition)
+
+#define LOGV_IF(condition)                      PLOGV_IF(condition)
+#define LOGD_IF(condition)                      PLOGD_IF(condition)
+#define LOGI_IF(condition)                      PLOGI_IF(condition)
+#define LOGW_IF(condition)                      PLOGW_IF(condition)
+#define LOGE_IF(condition)                      PLOGE_IF(condition)
+#define LOGF_IF(condition)                      PLOGF_IF(condition)
+#define LOGN_IF(condition)                      PLOGN_IF(condition)
+
+#define LOGV_IF_(instanceId, condition)         PLOGV_IF_(instanceId, condition)
+#define LOGD_IF_(instanceId, condition)         PLOGD_IF_(instanceId, condition)
+#define LOGI_IF_(instanceId, condition)         PLOGI_IF_(instanceId, condition)
+#define LOGW_IF_(instanceId, condition)         PLOGW_IF_(instanceId, condition)
+#define LOGE_IF_(instanceId, condition)         PLOGE_IF_(instanceId, condition)
+#define LOGF_IF_(instanceId, condition)         PLOGF_IF_(instanceId, condition)
+#define LOGN_IF_(instanceId, condition)         PLOGN_IF_(instanceId, condition)
+#endif

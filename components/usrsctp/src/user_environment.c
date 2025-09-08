@@ -350,7 +350,7 @@ finish_random(void)
 {
 	return;
 }
-#elif defined(__native_client__)
+#elif defined(__native_client__) && !defined(ESP32_PORT)
 #include <nacl/nacl_random.h>
 
 void

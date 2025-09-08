@@ -92,9 +92,5 @@ extern "C" void esp32_get_random_bytes(void *buf, size_t len) {
     }
 }
 
-// getrandom() system call compatibility (if used by libraries)
-extern "C" ssize_t getrandom(void *buf, size_t buflen, unsigned int flags) {
-    (void)flags; // Ignore flags for now
-    esp32_get_random_bytes(buf, buflen);
-    return buflen;
-}
+// Note: getrandom() is already provided by ESP-IDF's newlib
+// No need to implement it here

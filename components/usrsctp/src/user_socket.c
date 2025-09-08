@@ -3031,7 +3031,13 @@ void sctp_userspace_ip6_output(int *result, struct mbuf *o_pak,
 	}
 
 	if (!use_udp_tunneling) {
+#ifdef ESP32_PORT
+		struct in6_addr src_addr;
+		SCTP_GET_IPV6_SRC(src_addr, ip6);
+		if (memcmp(&src_addr, &in6addr_any, sizeof(struct in6_addr)) == 0) {
+#else
 		if (ip6->ip6_src.s6_addr == in6addr_any.s6_addr) {
+#endif
 			/* TODO get addr of outgoing interface */
 			SCTP_PRINTF("Why did the SCTP implementation did not choose a source address?\n");
 		}
@@ -3040,7 +3046,11 @@ void sctp_userspace_ip6_output(int *result, struct mbuf *o_pak,
 
 	memset((void *)&dst, 0, sizeof(struct sockaddr_in6));
 	dst.sin6_family = AF_INET6;
+#ifdef ESP32_PORT
+	SCTP_GET_IPV6_DST(dst.sin6_addr, ip6);
+#else
 	dst.sin6_addr = ip6->ip6_dst;
+#endif
 #ifdef HAVE_SIN6_LEN
 	dst.sin6_len = sizeof(struct sockaddr_in6);
 #endif

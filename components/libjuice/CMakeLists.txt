@@ -58,4 +58,6 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-unused-variable
     -Wno-missing-field-initializers
     -Wno-format-truncation
+    -Wno-format
+    -Wno-char-subscripts
 )

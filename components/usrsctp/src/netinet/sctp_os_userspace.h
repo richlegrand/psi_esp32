@@ -300,7 +300,9 @@ typedef pthread_t userland_thread_t;
 
 #if defined(_WIN32) || defined(__native_client__)
 
+#ifndef IFNAMSIZ
 #define IFNAMSIZ 64
+#endif
 
 #define random() rand()
 #define srandom(s) srand(s)
@@ -334,15 +336,22 @@ struct ip {
 	u_short   ip_id;
 	u_short   ip_off;
 #define IP_RP 0x8000
+#ifndef IP_DF
 #define IP_DF 0x4000
+#endif
+#ifndef IP_MF
 #define IP_MF 0x2000
+#endif
+#ifndef IP_OFFMASK
 #define IP_OFFMASK 0x1fff
+#endif
 	u_char    ip_ttl;
 	u_char    ip_p;
 	u_short   ip_sum;
 	struct in_addr ip_src, ip_dst;
 };
 
+#ifndef ESP32_PORT
 struct ifaddrs {
 	struct ifaddrs  *ifa_next;
 	char		*ifa_name;
@@ -352,6 +361,7 @@ struct ifaddrs {
 	struct sockaddr	*ifa_dstaddr;
 	void		*ifa_data;
 };
+#endif
 
 struct udphdr {
 	uint16_t uh_sport;
@@ -360,13 +370,17 @@ struct udphdr {
 	uint16_t uh_sum;
 };
 
+#ifndef ESP32_PORT  
 struct iovec {
 	size_t len;
 	char *buf;
 };
+#endif
 
+#ifndef ESP32_PORT
 #define iov_base buf
 #define iov_len	len
+#endif
 
 struct ifa_msghdr {
 	uint16_t         ifam_msglen;
@@ -436,6 +450,9 @@ struct sx {int dummy;};
 #include <user_environment.h>
 #include <user_atomic.h>
 #include <user_mbuf.h>
+#ifdef ESP32_PORT
+#include <netinet/esp32_compat.h>
+#endif
 /* #include <sys/uio.h> */
 /* #include <sys/lock.h> */
 #if defined(__FreeBSD__) && !defined(__Userspace__)
@@ -513,8 +530,13 @@ struct sx {int dummy;};
 #ifdef IPSEC
 #include <netipsec/ipsec6.h>
 #endif
-#if !defined(_WIN32)
+#if !defined(_WIN32) && !defined(ESP32_PORT)
 #include <netinet/ip6.h>
+#elif defined(ESP32_PORT)
+#include <lwip/ip6.h>
+#include <lwip/prot/ip6.h>
+#include <netinet/in_compat.h>
+#include <netinet/esp32_compat.h>
 #endif
 #if defined(__APPLE__) || defined(__FreeBSD__) || defined(__linux__) || defined(__NetBSD__) || defined(__OpenBSD__) || defined(_WIN32) || defined(__EMSCRIPTEN__)
 #include "user_ip6_var.h"

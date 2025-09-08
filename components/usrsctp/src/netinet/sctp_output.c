@@ -4634,7 +4634,11 @@ sctp_lowlevel_chunk_output(struct sctp_inpcb *inp,
 			ip6h->ip6_nxt = IPPROTO_SCTP;
 		}
 		ip6h->ip6_plen = htons((uint16_t)(packet_length - sizeof(struct ip6_hdr)));
+#ifdef ESP32_PORT
+		SCTP_SET_IPV6_DST(ip6h, sin6->sin6_addr);
+#else
 		ip6h->ip6_dst = sin6->sin6_addr;
+#endif
 
 		/*
 		 * Add SRC address selection here: we can only reuse to a
@@ -4800,7 +4804,11 @@ sctp_lowlevel_chunk_output(struct sctp_inpcb *inp,
 		lsa6 = &lsa6_storage;
 #endif /* SCTP_EMBEDDED_V6_SCOPE */
 #endif /* SCOPEDROUTING */
+#ifdef ESP32_PORT
+		SCTP_SET_IPV6_SRC(ip6h, lsa6->sin6_addr);
+#else
 		ip6h->ip6_src = lsa6->sin6_addr;
+#endif
 
 		if (port) {
 			if (htons(SCTP_BASE_SYSCTL(sctp_udp_tunneling_port)) == 0) {
@@ -4835,8 +4843,13 @@ sctp_lowlevel_chunk_output(struct sctp_inpcb *inp,
 
 #ifdef SCTP_DEBUG
 		/* Copy to be sure something bad is not happening */
+#ifdef ESP32_PORT
+		SCTP_GET_IPV6_DST(sin6->sin6_addr, ip6h);
+		SCTP_GET_IPV6_SRC(lsa6->sin6_addr, ip6h);
+#else
 		sin6->sin6_addr = ip6h->ip6_dst;
 		lsa6->sin6_addr = ip6h->ip6_src;
+#endif
 #endif
 
 		SCTPDBG(SCTP_DEBUG_OUTPUT3, "Calling ipv6 output routine from low level\n");
@@ -11900,8 +11913,13 @@ sctp_send_resp_msg(struct sockaddr *src, struct sockaddr *dst,
 		} else {
 			ip6->ip6_nxt = IPPROTO_SCTP;
 		}
+#ifdef ESP32_PORT
+		SCTP_SET_IPV6_SRC(ip6, dst_sin6->sin6_addr);
+		SCTP_SET_IPV6_DST(ip6, src_sin6->sin6_addr);
+#else
 		ip6->ip6_src = dst_sin6->sin6_addr;
 		ip6->ip6_dst = src_sin6->sin6_addr;
+#endif
 		len = sizeof(struct ip6_hdr);
 		shout = (struct sctphdr *)((caddr_t)ip6 + len);
 		break;

@@ -200,7 +200,12 @@ int udp_recvfrom(socket_t sock, char *buffer, size_t size, addr_record_t *src) {
 	}
 }
 
+#ifdef ESP32_PORT
+// ESP32: Rename to avoid collision with LWIP's udp_sendto
+int juice_udp_sendto(socket_t sock, const char *data, size_t size, const addr_record_t *dst) {
+#else
 int udp_sendto(socket_t sock, const char *data, size_t size, const addr_record_t *dst) {
+#endif
 #ifndef __linux__
 	addr_record_t tmp = *dst;
 	addr_record_t name;

@@ -19,6 +19,10 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#elif defined(ESP32_PORT)
+#include "netdb_compat.h"
+#include <netinet/in.h>
+#include <sys/socket.h>
 #else
 #include <netdb.h>
 #include <netinet/in.h>

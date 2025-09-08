@@ -5076,7 +5076,7 @@ sctp_print_address(struct sockaddr *sa)
 		struct sockaddr_in6 *sin6;
 
 		sin6 = (struct sockaddr_in6 *)sa;
-#if defined(__Userspace__)
+#if defined(__Userspace__) && !defined(ESP32_PORT)
 		SCTP_PRINTF("IPv6 address: %x:%x:%x:%x:%x:%x:%x:%x:port:%d scope:%u\n",
 			    ntohs(sin6->sin6_addr.s6_addr16[0]),
 			    ntohs(sin6->sin6_addr.s6_addr16[1]),
@@ -5877,7 +5877,7 @@ sctp_get_ifa_hash_val(struct sockaddr *addr)
 		uint32_t hash_of_addr;
 
 		sin6 = (struct sockaddr_in6 *)addr;
-#if !defined(_WIN32) && !(defined(__FreeBSD__) && defined(__Userspace__)) && !defined(__APPLE__)
+#if !defined(_WIN32) && !(defined(__FreeBSD__) && defined(__Userspace__)) && !defined(__APPLE__) && !defined(ESP32_PORT)
 		hash_of_addr = (sin6->sin6_addr.s6_addr32[0] +
 				sin6->sin6_addr.s6_addr32[1] +
 				sin6->sin6_addr.s6_addr32[2] +

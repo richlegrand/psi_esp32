@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
+#include <esp_system.h>
 
 static const char* TAG = "rtc_psram";
 
@@ -58,7 +59,8 @@ void* __wrap__Znwm(std::size_t size) {
         ESP_LOGW(TAG, "PSRAM new failed for %zu bytes, trying internal", size);
         ptr = heap_caps_malloc(size, MALLOC_CAP_INTERNAL);
         if (!ptr) {
-            throw std::bad_alloc();
+            ESP_LOGE(TAG, "Critical: Out of memory for %zu bytes allocation", size);
+            esp_system_abort("libdatachannel: Out of memory");
         }
     }
     return ptr;
