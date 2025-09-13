@@ -84,21 +84,9 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -UMBEDTLS_DEPRECATED_REMOVED
 )
 
-# Link-time wrapping for ESP32 compatibility (only for this component)
-target_link_options(${COMPONENT_LIB} PUBLIC
-    # Memory allocation -> PSRAM
-    -Wl,--wrap=malloc
-    -Wl,--wrap=free
-    -Wl,--wrap=calloc
-    -Wl,--wrap=realloc
-    -Wl,--wrap=_Znwm     # operator new(size_t)
-    -Wl,--wrap=_Znam     # operator new[](size_t) 
-    -Wl,--wrap=_ZdlPv    # operator delete(void*)
-    -Wl,--wrap=_ZdaPv    # operator delete[](void*)
-    # File I/O -> ESP32 RNG
-    -Wl,--wrap=open
-    -Wl,--wrap=read
-    -Wl,--wrap=close
+# Force include PSRAM allocation redirects for this component only
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -include esp32_malloc_redirect.h
 )
 
 # ESP32-specific compiler flags

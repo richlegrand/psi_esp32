@@ -39,17 +39,9 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     ESP32_PORT=1
 )
 
-# Link-time wrapping for ESP32 compatibility
-target_link_options(${COMPONENT_LIB} PUBLIC
-    # File I/O -> ESP32 RNG
-    -Wl,--wrap=open
-    -Wl,--wrap=read
-    -Wl,--wrap=close
-    # Memory allocation -> PSRAM
-    -Wl,--wrap=malloc
-    -Wl,--wrap=free
-    -Wl,--wrap=calloc
-    -Wl,--wrap=realloc
+# Force include PSRAM allocation redirects for libjuice
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -include ${CMAKE_CURRENT_LIST_DIR}/../libdatachannel/include/esp32_malloc_redirect.h
 )
 
 # ESP32-specific compiler flags

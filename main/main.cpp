@@ -11,10 +11,17 @@
 // Test libdatachannel includes
 #include "rtc/rtc.hpp"
 
+// ESP32 PSRAM configuration
+#include "esp32_psram_init.h"
+
 static const char *TAG = "main";
 
 extern "C" void app_main(void) {
     ESP_LOGI(TAG, "ESP32-P4 libdatachannel test starting...");
+    
+    // Configure pthread to use PSRAM for thread stacks (critical for usrsctp)
+    esp32_configure_pthread_psram();
+    print_rtc_memory_stats();
     
     // Initialize network stack
     ESP_ERROR_CHECK(esp_netif_init());

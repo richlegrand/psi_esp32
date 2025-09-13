@@ -68,13 +68,9 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     _GNU_SOURCE=1
 )
 
-# Link-time wrapping for ESP32 compatibility  
-target_link_options(${COMPONENT_LIB} PUBLIC
-    # Memory allocation -> PSRAM
-    -Wl,--wrap=malloc
-    -Wl,--wrap=free
-    -Wl,--wrap=calloc
-    -Wl,--wrap=realloc
+# Force include PSRAM allocation redirects for usrsctp (memory intensive)
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -include ${CMAKE_CURRENT_LIST_DIR}/../libdatachannel/include/esp32_malloc_redirect.h
 )
 
 # ESP32-specific compiler flags
