@@ -5,7 +5,7 @@ description: The component provides a general purpose PPP connectivity, typicall
   used as WiFi-PPP router
 repository: git://github.com/espressif/esp-protocols.git
 repository_info:
-  commit_sha: 858d38b55f5494ceb14fdc9bd7fccee32d4efde7
+  commit_sha: db7baaffba89b68c051d08027ac8f924961ec41f
   path: components/eppp_link
 url: https://github.com/espressif/esp-protocols/tree/master/components/eppp_link
-version: 1.1.1
+version: 1.1.2

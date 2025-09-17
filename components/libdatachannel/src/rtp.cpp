@@ -175,7 +175,7 @@ size_t RtpExtensionHeader::writeHeader(bool twoByteHeader, size_t offset, uint8_
 SSRC RtcpReportBlock::getSSRC() const { return ntohl(_ssrc); }
 
 void RtcpReportBlock::preparePacket(SSRC in_ssrc, uint8_t fraction,
-                                	uint32_t totalPacketsLost,
+                                	unsigned int totalPacketsLost,
                                     uint16_t highestSeqNo, uint16_t seqNoCycles, uint32_t jitter,
                                     uint64_t lastSR_NTP, uint64_t lastSR_DELAY) {
 	setSeqNo(highestSeqNo, seqNoCycles);
@@ -196,7 +196,7 @@ void RtcpReportBlock::preparePacket(SSRC in_ssrc, uint8_t fraction,
 void RtcpReportBlock::setSSRC(SSRC in_ssrc) { _ssrc = htonl(in_ssrc); }
 
 void RtcpReportBlock::setPacketsLost(uint8_t fractionLost,
-                                     uint32_t packetsLostCount) {
+                                     unsigned int packetsLostCount) {
 	_fractionLostAndPacketsLost = htonl((uint32_t(fractionLost) << 24) | (packetsLostCount & 0xFFFFFF));
 }
 
@@ -206,7 +206,7 @@ uint8_t RtcpReportBlock::getFractionLost() const {
 	return (uint8_t) ((ntohl(_fractionLostAndPacketsLost) & 0xFF00000) >> 24);
 }
 
-uint32_t RtcpReportBlock::getPacketsLostCount() const {
+unsigned int RtcpReportBlock::getPacketsLostCount() const {
 	return ntohl(_fractionLostAndPacketsLost) & 0x00FFFFFF;
 }
 
