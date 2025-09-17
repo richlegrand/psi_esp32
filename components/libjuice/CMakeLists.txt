@@ -4,6 +4,12 @@
 set(SOURCES
     src/addr.c
     src/agent.c
+    src/base64.c
+    src/conn.c
+    src/conn_mux.c
+    src/conn_poll.c
+    src/conn_thread.c
+    src/const_time.c
     src/crc32.c
     src/hash.c
     src/hmac.c

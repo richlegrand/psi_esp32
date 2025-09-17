@@ -1,6 +1,6 @@
 # ESP32-P4 libdatachannel component
 
-# Source files for minimal build
+# Source files for full build with WebSocket and Media
 set(SOURCES
     # Core implementation files
     src/impl/init.cpp
@@ -20,6 +20,42 @@ set(SOURCES
     src/impl/transport.cpp
     src/impl/utils.cpp
     src/impl/logcounter.cpp
+    
+    # WebSocket support
+    src/impl/websocket.cpp
+    src/impl/websocketserver.cpp
+    src/impl/wstransport.cpp
+    src/impl/wshandshake.cpp
+    src/impl/tcptransport.cpp
+    src/impl/pollservice.cpp
+    src/impl/pollinterrupter.cpp
+    src/impl/httpproxytransport.cpp
+    src/impl/verifiedtlstransport.cpp
+    src/impl/http.cpp
+    src/impl/sha.cpp
+    src/websocket.cpp
+    src/websocketserver.cpp
+    
+    # Media support
+    src/rtcpsrreporter.cpp
+    src/rtcpreceivingsession.cpp
+    src/rtcpnackresponder.cpp
+    src/mediahandler.cpp
+    src/rtppacketizer.cpp
+    src/rtppacketizationconfig.cpp
+    src/rtpdepacketizer.cpp
+    src/rtp.cpp
+    src/nalunit.cpp
+    src/h264rtppacketizer.cpp
+    src/h264rtpdepacketizer.cpp
+    src/h265rtppacketizer.cpp
+    src/h265rtpdepacketizer.cpp
+    src/h265nalunit.cpp
+    src/av1rtppacketizer.cpp
+    src/dependencydescriptor.cpp
+    src/plihandler.cpp
+    src/rembhandler.cpp
+    src/pacinghandler.cpp
     
     # ESP32 adaptations
     psram_allocator.cpp
@@ -49,6 +85,7 @@ idf_component_register(
     PRIV_INCLUDE_DIRS
         src/impl
         include/rtc
+        deps/libsrtp/include
     REQUIRES 
         pthread
         mbedtls
@@ -57,6 +94,7 @@ idf_component_register(
         esp_event
         esp_timer
         esp_wifi
+        libsrtp
     PRIV_REQUIRES
         plog
         libjuice  
@@ -70,8 +108,8 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
 
 # Compiler definitions
 target_compile_definitions(${COMPONENT_LIB} PUBLIC
-    RTC_ENABLE_WEBSOCKET=0
-    RTC_ENABLE_MEDIA=0
+    RTC_ENABLE_WEBSOCKET=1
+    RTC_ENABLE_MEDIA=1
     USE_MBEDTLS=1
     ESP32_PORT=1
     CONFIG_MBEDTLS_SSL_PROTO_DTLS=1

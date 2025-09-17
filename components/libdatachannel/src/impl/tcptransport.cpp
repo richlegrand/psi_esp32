@@ -17,6 +17,17 @@
 #include <unistd.h>
 #endif
 
+#ifdef ESP_PLATFORM
+// ESP32 compatibility - sock_utils provides getnameinfo implementation
+// but we may still need the flag definitions
+#ifndef NI_NUMERICHOST
+#define NI_NUMERICHOST 1
+#endif
+#ifndef NI_NUMERICSERV
+#define NI_NUMERICSERV 2
+#endif
+#endif // ESP_PLATFORM
+
 #include <chrono>
 
 namespace rtc::impl {

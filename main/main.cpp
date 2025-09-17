@@ -20,6 +20,12 @@
 // ESP32 PSRAM configuration
 #include "esp32_psram_init.h"
 
+// H.264 file parser
+#include "h264fileparser.hpp"
+
+// Streamer function
+#include "streamer.hpp"
+
 // WiFi Configuration - HARDCODED (replace ArgParser)
 #define WIFI_SSID      "ladybaby"
 #define WIFI_PASS      "4053487993"
@@ -224,22 +230,8 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
     
-    // Initialize libdatachannel
-    try {
-        rtc::InitLogger(rtc::LogLevel::Info);
-        ESP_LOGI(TAG, "libdatachannel logger initialized");
-        
-        // TODO: Port streamer logic here
-        // - Create WebSocket connection to signaling server
-        // - Set up PeerConnection
-        // - Load H.264 frames from /littlefs/h264/
-        // - Stream video to connected clients
-        
-        ESP_LOGI(TAG, "Ready to stream H.264 video!");
-        
-    } catch (const std::exception& e) {
-        ESP_LOGE(TAG, "libdatachannel initialization failed: %s", e.what());
-    }
+    // Start the WebRTC streamer
+    startStreamer();
     
     // Keep running
     while (true) {

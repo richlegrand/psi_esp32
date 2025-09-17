@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.cpp"
+    SRCS "main.cpp" "h264fileparser.cpp" "fileparser.cpp" "stream.cpp" "dispatchqueue.cpp" "helpers.cpp" "streamer_main.cpp"
     INCLUDE_DIRS "."
     REQUIRES 
         libdatachannel
@@ -10,6 +10,7 @@ idf_component_register(
         esp_wifi_remote  # WiFi Remote for ESP32-C6 co-processor
         esp_hosted       # ESP-Hosted transport for ESP32-C6
         littlefs         # LittleFS for media file storage (from joltwallet/littlefs)
+        json             # Built-in cJSON for WebSocket signaling
 )
 
 # Create LittleFS image from media_files directory
