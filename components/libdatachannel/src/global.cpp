@@ -18,6 +18,12 @@
 
 #include "impl/init.hpp"
 
+#ifdef ESP_PLATFORM
+#include "impl/threadpool.hpp"
+#include "impl/pollservice.hpp"
+#include <thread>
+#endif
+
 #include <mutex>
 
 namespace {
@@ -65,8 +71,14 @@ struct LogAppender : public plog::IAppender {
 void InitLogger(LogLevel level, LogCallback callback) {
 	const auto severity = static_cast<plog::Severity>(level);
 	static LogAppender *appender = nullptr;
+#ifdef ESP_PLATFORM
+	// ESP32: Comment out static mutex to avoid scheduler dependency during global constructors
+	// static std::mutex mutex;
+	// std::lock_guard lock(mutex);
+#else
 	static std::mutex mutex;
 	std::lock_guard lock(mutex);
+#endif
 	if (appender) {
 		appender->callback = std::move(callback);
 		plogInit(severity, nullptr); // change the severity
@@ -87,6 +99,20 @@ void Preload() { impl::Init::Instance().preload(); }
 std::shared_future<void> Cleanup() { return impl::Init::Instance().cleanup(); }
 
 void SetSctpSettings(SctpSettings s) { impl::Init::Instance().setSctpSettings(std::move(s)); }
+
+#ifdef ESP_PLATFORM
+void StartNetworking() {
+	// ESP32: Start threads that were deferred during initialization
+	int concurrency = std::thread::hardware_concurrency();
+	int count = std::max(concurrency, 2); // MIN_THREADPOOL_SIZE
+
+	impl::ThreadPool::Instance().spawn(count);
+
+#if RTC_ENABLE_WEBSOCKET
+	impl::PollService::Instance().startThreads();
+#endif
+}
+#endif
 
 std::ostream &operator<<(std::ostream &out, LogLevel level) {
 	switch (level) {

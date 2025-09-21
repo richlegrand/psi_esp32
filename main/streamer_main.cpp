@@ -8,10 +8,13 @@
 #include <cJSON.h>
 #include "rtc/rtc.hpp"
 #include "h264fileparser.hpp"
+#include "opusfileparser.hpp"
 #include "stream.hpp"
 #include "helpers.hpp"
 #include "esp_log.h"
 #include "streamer.hpp"
+#include "esp_transport_ws.h"
+#include "esp_transport_tcp.h"
 
 #include <chrono>
 #include <unordered_map>
@@ -29,10 +32,14 @@ template <class T> weak_ptr<T> make_weak_ptr(shared_ptr<T> ptr) { return ptr; }
 /// all connected clients
 unordered_map<string, shared_ptr<Client>> clients{};
 
+/// Global WebSocket transport for signaling
+esp_transport_handle_t ws_transport = nullptr;
+
+/// Send message via WebSocket
+bool sendWebSocketMessage(const string& message);
+
 /// Creates peer connection and client representation
-shared_ptr<Client> createPeerConnection(const Configuration &config,
-                                        weak_ptr<WebSocket> wws,
-                                        string id);
+shared_ptr<Client> createPeerConnection(const Configuration &config, string id);
 
 /// Creates stream
 shared_ptr<Stream> createStream(const string h264Samples, const unsigned fps);
@@ -43,19 +50,43 @@ void addToStream(shared_ptr<Client> client, bool isAddingVideo);
 /// Start stream
 void startStream();
 
-/// Main dispatch queue
-DispatchQueue MainThread("Main");
+/// WebSocket receive task function
+static void wsReceiveTask(void* param);
+
+/// Main dispatch queue (initialized in startStreamer())
+std::unique_ptr<DispatchQueue> MainThread;
 
 /// Audio and video stream
 optional<shared_ptr<Stream>> avStream = nullopt;
 
+/// Static RTC configuration for WebSocket task
+static Configuration g_rtcConfig;
+
 // ESP32 hardcoded configuration
 const string h264SamplesDirectory = "/littlefs/h264";
-const string wsServerUrl = "ws://192.168.1.100:8000";
+const string wsServerUrl = "ws://192.168.1.248:8000";
 const unsigned fps = 30;
 
+/// Send message via WebSocket
+bool sendWebSocketMessage(const string& message) {
+    if (!ws_transport) {
+        ESP_LOGE(TAG, "WebSocket not connected");
+        return false;
+    }
+
+    int ret = esp_transport_ws_send_raw(ws_transport, WS_TRANSPORT_OPCODES_TEXT,
+                                       message.c_str(), message.length(), 5000);
+    if (ret < 0) {
+        ESP_LOGE(TAG, "Failed to send WebSocket message");
+        return false;
+    }
+
+    ESP_LOGD(TAG, "Sent WebSocket message: %s", message.c_str());
+    return true;
+}
+
 /// Handle incoming WebSocket message
-void wsOnMessage(const char* message_str, Configuration config, shared_ptr<WebSocket> ws) {
+void wsOnMessage(const char* message_str, Configuration config) {
     cJSON *message = cJSON_Parse(message_str);
     if (!message) {
         ESP_LOGE(TAG, "Failed to parse JSON message");
@@ -77,7 +108,7 @@ void wsOnMessage(const char* message_str, Configuration config, shared_ptr<WebSo
     string type = type_item->valuestring;
 
     if (type == "request") {
-        clients.emplace(id, createPeerConnection(config, make_weak_ptr(ws), id));
+        clients.emplace(id, createPeerConnection(config, id));
     } else if (type == "answer") {
         if (auto jt = clients.find(id); jt != clients.end()) {
             auto pc = jt->second->peerConnection;
@@ -93,9 +124,7 @@ void wsOnMessage(const char* message_str, Configuration config, shared_ptr<WebSo
     cJSON_Delete(message);
 }
 
-shared_ptr<Client> createPeerConnection(const Configuration &config,
-                                       weak_ptr<WebSocket> wws,
-                                       string id) {
+shared_ptr<Client> createPeerConnection(const Configuration &config, string id) {
     auto pc = make_shared<PeerConnection>(config);
     auto client = make_shared<Client>(pc);
 
@@ -113,16 +142,14 @@ shared_ptr<Client> createPeerConnection(const Configuration &config,
                  state == PeerConnection::GatheringState::Complete ? "Complete" : "In Progress");
     });
 
-    pc->onLocalDescription([id, wws](Description description) {
+    pc->onLocalDescription([id](Description description) {
         cJSON *message = cJSON_CreateObject();
         cJSON_AddStringToObject(message, "id", id.c_str());
         cJSON_AddStringToObject(message, "type", description.typeString().c_str());
         cJSON_AddStringToObject(message, "sdp", string(description).c_str());
-        
+
         char *message_str = cJSON_Print(message);
-        if (auto ws = wws.lock()) {
-            ws->send(message_str);
-        }
+        sendWebSocketMessage(string(message_str));
         free(message_str);
         cJSON_Delete(message);
     });
@@ -156,9 +183,11 @@ shared_ptr<Client> createPeerConnection(const Configuration &config,
 
 shared_ptr<Stream> createStream(const string h264Samples, const unsigned fps) {
     auto video = make_shared<H264FileParser>(h264Samples, fps, true);
-    
-    // Only H.264 video for now (no audio)
-    auto stream = make_shared<Stream>(video, nullptr);
+
+    // Create a dummy audio stream (FileParser will return empty samples since no .opus files exist)
+    auto audio = make_shared<OPUSFileParser>("/littlefs/opus", true);
+
+    auto stream = make_shared<Stream>(video, audio);
     
     stream->onSample([](Stream::StreamSourceType type, uint64_t sampleTime, rtc::binary sample) {
         vector<ClientTrack> tracks{};
@@ -228,41 +257,89 @@ void startStream() {
     if (!avStream.has_value()) {
         avStream = createStream(h264SamplesDirectory, fps);
     }
-    
+
     avStream.value()->start();
     ESP_LOGI(TAG, "Stream started");
+}
+
+// WebSocket receive task - runs in separate FreeRTOS task
+static void wsReceiveTask(void* param) {
+    char buffer[1024];
+
+    while (ws_transport) {
+        int len = esp_transport_read(ws_transport, buffer, sizeof(buffer) - 1, 1000);
+        if (len > 0) {
+            buffer[len] = '\0';
+            wsOnMessage(buffer, g_rtcConfig);
+        } else if (len < 0) {
+            ESP_LOGE(TAG, "WebSocket read error");
+            break;
+        }
+        // len == 0 means timeout, continue
+    }
+
+    vTaskDelete(NULL);
+}
+
+static void wsReceive(void) {
+    char buffer[1024];
+
+    int len = esp_transport_read(ws_transport, buffer, sizeof(buffer) - 1, 1000);
+    if (len > 0) {
+        buffer[len] = '\0';
+        wsOnMessage(buffer, g_rtcConfig);
+    } else if (len < 0) {
+        ESP_LOGE(TAG, "WebSocket read error");
+    }
+    // len == 0 means timeout, continue
 }
 
 void startStreamer() {
     InitLogger(LogLevel::Info);
 
-    Configuration rtcConfig;
-    // Add STUN servers for NAT traversal
-    rtcConfig.iceServers.push_back({"stun:stun.l.google.com:19302"});
+    // Initialize the main dispatch queue now (not as global constructor)
+    MainThread = std::make_unique<DispatchQueue>("Main");
 
-    // Connect to signaling server
-    auto ws = make_shared<WebSocket>();
-    
-    ws->onOpen([&]() {
-        ESP_LOGI(TAG, "WebSocket connected to signaling server");
-        startStream();
-    });
+    // Initialize global RTC configuration
+    g_rtcConfig.iceServers.push_back({"stun:stun.l.google.com:19302"});
 
-    ws->onError([](string error) {
-        ESP_LOGE(TAG, "WebSocket error: %s", error.c_str());
-    });
+    // Connect to signaling server using ESP-IDF WebSocket transport
+    esp_transport_handle_t tcp_transport = esp_transport_tcp_init();
+    if (!tcp_transport) {
+        ESP_LOGE(TAG, "Failed to initialize TCP transport");
+        return;
+    }
 
-    ws->onClosed([]() {
-        ESP_LOGI(TAG, "WebSocket closed");
-    });
+    ws_transport = esp_transport_ws_init(tcp_transport);
+    if (!ws_transport) {
+        ESP_LOGE(TAG, "Failed to initialize WebSocket transport");
+        esp_transport_destroy(tcp_transport);
+        return;
+    }
 
-    ws->onMessage([&](variant<binary, string> data) {
-        if (holds_alternative<string>(data)) {
-            wsOnMessage(get<string>(data).c_str(), rtcConfig, ws);
-        }
-    });
+    // Parse WebSocket URL - simplified for ws://host:port format
+    string host = "192.168.1.248";  // Extract from wsServerUrl
+    int port = 8000;
+    string path = "/";
 
-    ws->open(wsServerUrl);
-    
+    esp_transport_ws_set_path(ws_transport, path.c_str());
+
+    // Connect to WebSocket server
+    int ret = esp_transport_connect(ws_transport, host.c_str(), port, 5000);
+    if (ret < 0) {
+        ESP_LOGE(TAG, "WebSocket connection failed");
+        esp_transport_destroy(ws_transport);
+        esp_transport_destroy(tcp_transport);
+        ws_transport = nullptr;
+        return;
+    }
+
+    ESP_LOGI(TAG, "WebSocket connected to signaling server");
+    startStream();
+
+    // Start task to handle incoming WebSocket messages
+    // Use static function for FreeRTOS compatibility (not lambda)
+    xTaskCreate(wsReceiveTask, "ws_recv", 8192, nullptr, 5, NULL);
+    //wsReceive();
     ESP_LOGI(TAG, "Streamer ready, waiting for connections...");
 }

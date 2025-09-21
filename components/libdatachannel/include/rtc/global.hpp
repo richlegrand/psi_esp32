@@ -52,6 +52,11 @@ struct SctpSettings {
 
 RTC_CPP_EXPORT void SetSctpSettings(SctpSettings s);
 
+#ifdef ESP_PLATFORM
+// ESP32: Start networking threads after system initialization is complete
+RTC_CPP_EXPORT void StartNetworking();
+#endif
+
 RTC_CPP_EXPORT std::ostream &operator<<(std::ostream &out, LogLevel level);
 
 } // namespace rtc

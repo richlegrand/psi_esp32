@@ -37,6 +37,7 @@ public:
 	PollService &operator=(PollService &&) = delete;
 
 	void start();
+	void startThreads(); // ESP32: Separate thread creation from basic init
 	void join();
 
 	enum class Direction { Both, In, Out };

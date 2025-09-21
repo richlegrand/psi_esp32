@@ -121,7 +121,14 @@ void Init::doInit() {
 	int concurrency = std::thread::hardware_concurrency();
 	int count = std::max(concurrency, MIN_THREADPOOL_SIZE);
 	PLOG_DEBUG << "Spawning " << count << " threads";
+
+#ifdef ESP_PLATFORM
+	// ESP32: Create singletons but don't spawn threads during early init
+	// Threads will be spawned later when networking is explicitly started
+	ThreadPool::Instance(); // Creates singleton, no threads yet
+#else
 	ThreadPool::Instance().spawn(count);
+#endif
 
 #if RTC_ENABLE_WEBSOCKET
 	PollService::Instance().start();

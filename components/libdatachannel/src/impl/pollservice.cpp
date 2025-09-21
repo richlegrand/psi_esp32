@@ -32,9 +32,18 @@ PollService::~PollService() {}
 
 void PollService::start() {
 	mSocks = std::make_unique<SocketMap>();
-	mInterrupter = std::make_unique<PollInterrupter>();
+	// ESP32: Don't create thread/interrupter during early init
+	// Will be created later in startThreads()
 	mStopped = false;
-	mThread = std::thread(&PollService::runLoop, this);
+}
+
+void PollService::startThreads() {
+	std::unique_lock lock(mMutex);
+	if (!mInterrupter && !mStopped) {
+		// Now it's safe to create threads and pipe()
+		mInterrupter = std::make_unique<PollInterrupter>();
+		mThread = std::thread(&PollService::runLoop, this);
+	}
 }
 
 void PollService::join() {
@@ -61,8 +70,11 @@ void PollService::add(socket_t sock, Params params) {
 	assert(mSocks);
 	mSocks->insert_or_assign(sock, SocketEntry{std::move(params), std::move(until)});
 
-	assert(mInterrupter);
-	mInterrupter->interrupt();
+	// ESP32: Only interrupt if threads are already started
+	if (mInterrupter) {
+		mInterrupter->interrupt();
+	}
+	// If threads aren't started yet, the socket will be processed when startThreads() is called
 }
 
 void PollService::remove(socket_t sock) {

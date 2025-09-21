@@ -108,7 +108,7 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
 
 # Compiler definitions
 target_compile_definitions(${COMPONENT_LIB} PUBLIC
-    RTC_ENABLE_WEBSOCKET=1
+    RTC_ENABLE_WEBSOCKET=0     # Disable WebSocket to avoid static initialization issues on ESP32
     RTC_ENABLE_MEDIA=1
     USE_MBEDTLS=1
     ESP32_PORT=1
@@ -123,9 +123,10 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
 )
 
 # Force include PSRAM allocation redirects for this component only
-target_compile_options(${COMPONENT_LIB} PRIVATE
-    -include esp32_malloc_redirect.h
-)
+# TEMPORARILY DISABLED - causes crash during global constructor phase
+# target_compile_options(${COMPONENT_LIB} PRIVATE
+#     -include esp32_malloc_redirect.h
+# )
 
 # ESP32-specific compiler flags
 target_compile_options(${COMPONENT_LIB} PRIVATE

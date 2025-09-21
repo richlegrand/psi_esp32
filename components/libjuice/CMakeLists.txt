@@ -46,9 +46,10 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
 )
 
 # Force include PSRAM allocation redirects for libjuice
-target_compile_options(${COMPONENT_LIB} PRIVATE
-    -include ${CMAKE_CURRENT_LIST_DIR}/../libdatachannel/include/esp32_malloc_redirect.h
-)
+# TEMPORARILY DISABLED - causes crash during global constructor phase
+# target_compile_options(${COMPONENT_LIB} PRIVATE
+#     -include ${CMAKE_CURRENT_LIST_DIR}/../libdatachannel/include/esp32_malloc_redirect.h
+# )
 
 # ESP32-specific compiler flags
 target_compile_options(${COMPONENT_LIB} PRIVATE

@@ -1,41 +1,26 @@
+// ESP32-P4 libdatachannel H.264 WebRTC streamer
 #include <stdio.h>
-#include <thread>
-#include <memory>
 #include <string.h>
 #include "esp_log.h"
-#include "esp_system.h"
+#include "esp_wifi.h"
+#include "esp_wifi_remote.h"  // ESP-Hosted WiFi Remote API
+#include "esp_netif.h"
+#include "esp_event.h"
+#include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
-#include "esp_netif.h"
-#include "esp_event.h"
-#include "esp_wifi.h"
-#include "esp_wifi_remote.h"  // ESP-Hosted WiFi Remote API
-#include "nvs_flash.h"
-#include "esp_littlefs.h"  // From joltwallet/littlefs component
 
-// Test libdatachannel includes
+// WebRTC streaming functionality
 #include "rtc/rtc.hpp"
-
-// ESP32 PSRAM configuration
-#include "esp32_psram_init.h"
-
-// H.264 file parser
-#include "h264fileparser.hpp"
-
-// Streamer function
 #include "streamer.hpp"
 
-// WiFi Configuration - HARDCODED (replace ArgParser)
-#define WIFI_SSID      "ladybaby"
-#define WIFI_PASS      "4053487993"
-#define MAXIMUM_RETRY  5
+static const char *TAG = "h264_streamer";
 
-// WebSocket server configuration - HARDCODED
-#define WS_SERVER_IP   "192.168.1.100"  // Your signaling server IP
-#define WS_SERVER_PORT 8000
-
-static const char *TAG = "main";
+// WiFi credentials - replace with your network
+#define WIFI_SSID "psinet"
+#define WIFI_PASS "4053487993"
+#define MAXIMUM_RETRY 5
 
 // FreeRTOS event group for WiFi connection
 static EventGroupHandle_t s_wifi_event_group;
@@ -46,7 +31,6 @@ static EventGroupHandle_t s_wifi_event_group;
 static int s_retry_num = 0;
 static esp_netif_t *s_sta_netif = NULL;
 
-// WiFi event handler
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data) {
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
@@ -64,7 +48,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
-        
+
         // Now that the interface is up, create IPv6 link-local address
         if (s_sta_netif) {
             esp_err_t ipv6_ret = esp_netif_create_ip6_linklocal(s_sta_netif);
@@ -74,7 +58,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                 ESP_LOGW(TAG, "Failed to create IPv6 link-local address: %s", esp_err_to_name(ipv6_ret));
             }
         }
-        
+
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_GOT_IP6) {
         ip_event_got_ip6_t* event = (ip_event_got_ip6_t*) event_data;
@@ -89,7 +73,7 @@ static void wifi_init_sta(void) {
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
-    
+
     // Create default WiFi station (ESP-Hosted redirects to ESP32-C6)
     s_sta_netif = esp_netif_create_default_wifi_sta();
 
@@ -99,7 +83,7 @@ static void wifi_init_sta(void) {
     esp_event_handler_instance_t instance_any_id;
     esp_event_handler_instance_t instance_got_ip;
     esp_event_handler_instance_t instance_got_ip6;
-    
+
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
                                                         ESP_EVENT_ANY_ID,
                                                         &wifi_event_handler,
@@ -129,6 +113,22 @@ static void wifi_init_sta(void) {
     ESP_ERROR_CHECK(esp_wifi_start());
 
     ESP_LOGI(TAG, "wifi_init_sta finished.");
+}
+
+extern "C" void app_main(void) {
+    ESP_LOGI(TAG, "Starting H.264 WebRTC streamer...");
+
+    // Initialize NVS (required for WiFi)
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    // Initialize WiFi with ESP-Hosted
+    ESP_LOGI(TAG, "Initializing WiFi with ESP-Hosted...");
+    wifi_init_sta();
 
     // Wait for IPv4 connection first
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
@@ -139,7 +139,7 @@ static void wifi_init_sta(void) {
 
     if (bits & WIFI_CONNECTED_BIT) {
         ESP_LOGI(TAG, "connected to ap SSID:%s", WIFI_SSID);
-        
+
         // Wait for IPv6 address (with timeout since it's optional)
         ESP_LOGI(TAG, "Waiting for IPv6 address...");
         EventBits_t ipv6_bits = xEventGroupWaitBits(s_wifi_event_group,
@@ -147,95 +147,34 @@ static void wifi_init_sta(void) {
                 pdFALSE,
                 pdFALSE,
                 pdMS_TO_TICKS(10000)); // 10 second timeout
-        
+
         if (ipv6_bits & WIFI_IPV6_BIT) {
             ESP_LOGI(TAG, "IPv6 link-local address acquired");
         } else {
-            ESP_LOGW(TAG, "IPv6 address not acquired within timeout - continuing with IPv4 only");
+            ESP_LOGI(TAG, "IPv6 address not available, continuing with IPv4 only");
         }
-        
+
     } else if (bits & WIFI_FAIL_BIT) {
         ESP_LOGI(TAG, "Failed to connect to SSID:%s", WIFI_SSID);
+        return;
     } else {
         ESP_LOGE(TAG, "UNEXPECTED EVENT");
-    }
-}
-
-// Initialize LittleFS
-static void littlefs_init(void) {
-    ESP_LOGI(TAG, "Initializing LittleFS");
-
-    esp_vfs_littlefs_conf_t conf = {
-        .base_path = "/littlefs",
-        .partition_label = "storage",
-        .format_if_mount_failed = false,  // Don't format - we have media files
-        .dont_mount = false,
-    };
-
-    esp_err_t ret = esp_vfs_littlefs_register(&conf);
-    if (ret != ESP_OK) {
-        if (ret == ESP_FAIL) {
-            ESP_LOGE(TAG, "Failed to mount LittleFS");
-        } else if (ret == ESP_ERR_NOT_FOUND) {
-            ESP_LOGE(TAG, "Failed to find LittleFS partition");
-        } else {
-            ESP_LOGE(TAG, "Failed to initialize LittleFS (%s)", esp_err_to_name(ret));
-        }
         return;
     }
 
-    size_t total = 0, used = 0;
-    ret = esp_littlefs_info("storage", &total, &used);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to get LittleFS partition information (%s)", esp_err_to_name(ret));
-    } else {
-        ESP_LOGI(TAG, "LittleFS partition size: total: %d KB, used: %d KB", total/1024, used/1024);
-    }
-}
+    // Initialize libdatachannel for WebRTC
+    rtc::InitLogger(rtc::LogLevel::Info);
+    ESP_LOGI(TAG, "InitLogger called successfully");
 
-extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "ESP32-P4 libdatachannel streamer starting...");
-    
-    // Configure pthread to use PSRAM for thread stacks (critical for usrsctp)
-    esp32_configure_pthread_psram();
-    print_rtc_memory_stats();
-    
-    // Initialize NVS (required for WiFi)
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
-        ESP_ERROR_CHECK(nvs_flash_erase());
-        ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
-    
-    // Initialize WiFi with IPv6
-    ESP_LOGI(TAG, "Connecting to WiFi...");
-    wifi_init_sta();
-    
-    // Initialize LittleFS for media files
-    littlefs_init();
-    
-    // Test reading H.264 files from LittleFS
-    ESP_LOGI(TAG, "Checking H.264 media files:");
-    FILE* f = fopen("/littlefs/h264/0.h264", "r");
-    if (f) {
-        fseek(f, 0, SEEK_END);
-        long size = ftell(f);
-        ESP_LOGI(TAG, "Found 0.h264, size: %ld bytes", size);
-        fclose(f);
-    } else {
-        ESP_LOGW(TAG, "Could not open /littlefs/h264/0.h264");
-    }
-    
-    ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
-    ESP_LOGI(TAG, "IDF version: %s", esp_get_idf_version());
-    
-    // Start the WebRTC streamer
+    // ESP32: Start networking threads now that FreeRTOS scheduler is running
+    ESP_LOGI(TAG, "Starting networking threads...");
+    rtc::StartNetworking();
+    ESP_LOGI(TAG, "Networking threads started successfully");
+
+    // Start the H.264 WebRTC streamer
+    ESP_LOGI(TAG, "Starting H.264 streamer...");
     startStreamer();
-    
-    // Keep running
-    while (true) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
-        ESP_LOGI(TAG, "Free heap: %lu bytes", esp_get_free_heap_size());
-    }
+
+    // The streamer runs in its own context, main task can exit
+    ESP_LOGI(TAG, "H.264 streamer started successfully");
 }

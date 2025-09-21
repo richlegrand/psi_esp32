@@ -9,7 +9,7 @@
 
 #include "stream.hpp"
 #include "helpers.hpp"
-
+#include <stdio.h>
 #ifdef _WIN32
 // taken from https://stackoverflow.com/questions/5801813/c-usleep-is-obsolete-workarounds-for-windows-mingw
 #include <windows.h>
