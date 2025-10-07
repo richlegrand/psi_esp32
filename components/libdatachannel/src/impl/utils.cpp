@@ -18,6 +18,11 @@
 #include <sstream>
 #include <thread>
 
+#ifdef ESP_PLATFORM
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
+
 #if defined(_WIN32)
 #include <windows.h>
 
@@ -134,8 +139,14 @@ std::seed_seq random_seed() {
 	    static_cast<unsigned int>(high_resolution_clock::now().time_since_epoch().count()));
 
 	// Seed with thread id
+#ifdef ESP_PLATFORM
+	// On ESP32, FreeRTOS tasks may not have pthread support
+	// Use FreeRTOS task handle as alternative
+	seed.push_back(static_cast<unsigned int>(reinterpret_cast<uintptr_t>(xTaskGetCurrentTaskHandle())));
+#else
 	seed.push_back(
 	    static_cast<unsigned int>(std::hash<std::thread::id>{}(std::this_thread::get_id())));
+#endif
 
 	return std::seed_seq(seed.begin(), seed.end());
 }

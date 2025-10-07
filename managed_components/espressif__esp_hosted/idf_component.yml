@@ -5,7 +5,7 @@ description: ESP-Hosted-MCU provide drivers to act any ESP chipset as Wi-Fi or B
   co-processor.
 repository: git://github.com/espressif/esp-hosted-mcu.git
 repository_info:
-  commit_sha: 8907fd1cf54d0775fa3b5d64b5a01f94528c54bd
+  commit_sha: a0767ca105bdcacb3fabe0135846f432f1361bc3
   path: .
 url: https://github.com/espressif/esp-hosted-mcu
-version: 2.0.17
+version: 2.5.3

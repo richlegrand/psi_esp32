@@ -286,8 +286,13 @@
 #define SCTP_WQ_ADDR_LOCK_ASSERT() \
 	KASSERT(pthread_mutex_trylock(&SCTP_BASE_INFO(wq_addr_mtx)) == EBUSY, ("%s:%d: wq_addr_mtx not locked", __FILE__, __LINE__))
 
+#ifdef ESP32_PORT
+#define SCTP_INP_INFO_LOCK_INIT() \
+	(void)pthread_rwlock_init(&SCTP_BASE_INFO(ipi_ep_mtx), NULL)
+#else
 #define SCTP_INP_INFO_LOCK_INIT() \
 	(void)pthread_rwlock_init(&SCTP_BASE_INFO(ipi_ep_mtx), &SCTP_BASE_VAR(rwlock_attr))
+#endif
 #define SCTP_INP_INFO_LOCK_DESTROY() \
 	(void)pthread_rwlock_destroy(&SCTP_BASE_INFO(ipi_ep_mtx))
 #ifdef INVARIANTS
@@ -588,8 +593,13 @@
 
 #else
 /* address list locks */
+#ifdef ESP32_PORT
+#define SCTP_IPI_ADDR_INIT() \
+	(void)pthread_rwlock_init(&SCTP_BASE_INFO(ipi_addr_mtx), NULL)
+#else
 #define SCTP_IPI_ADDR_INIT() \
 	(void)pthread_rwlock_init(&SCTP_BASE_INFO(ipi_addr_mtx), &SCTP_BASE_VAR(rwlock_attr))
+#endif
 #define SCTP_IPI_ADDR_DESTROY() \
 	(void)pthread_rwlock_destroy(&SCTP_BASE_INFO(ipi_addr_mtx))
 #ifdef INVARIANTS

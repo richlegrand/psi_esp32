@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 #include "stream.hpp"
+#include "esp_heap_caps.h"
 
 class FileParser: public StreamSource {
     std::string directory;
@@ -22,8 +23,37 @@ class FileParser: public StreamSource {
     uint32_t counter = -1;
     bool loop;
     uint64_t loopTimestampOffset = 0;
+
+    // Pre-loaded file buffers (raw PSRAM allocation)
+    struct PSRAMBuffer {
+        void* data;
+        size_t size;
+        PSRAMBuffer() : data(nullptr), size(0) {}
+        PSRAMBuffer(void* d, size_t s) : data(d), size(s) {}
+        ~PSRAMBuffer() { if (data) heap_caps_free(data); }
+        // Move constructor/assignment for safe ownership transfer
+        PSRAMBuffer(PSRAMBuffer&& other) : data(other.data), size(other.size) {
+            other.data = nullptr; other.size = 0;
+        }
+        PSRAMBuffer& operator=(PSRAMBuffer&& other) {
+            if (this != &other) {
+                if (data) heap_caps_free(data);
+                data = other.data; size = other.size;
+                other.data = nullptr; other.size = 0;
+            }
+            return *this;
+        }
+        PSRAMBuffer(const PSRAMBuffer&) = delete;
+        PSRAMBuffer& operator=(const PSRAMBuffer&) = delete;
+    };
+    std::vector<PSRAMBuffer> preloadedSamples;
+
 protected:
     rtc::binary sample = {};
+
+    // Helper to pre-load all files into PSRAM (called from constructor in main thread)
+    void preloadAllFiles();
+
 public:
     FileParser(std::string directory, std::string extension, uint32_t samplesPerSecond, bool loop);
     virtual ~FileParser();

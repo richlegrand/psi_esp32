@@ -9,14 +9,21 @@
 
 #include "fileparser.hpp"
 #include <fstream>
+#include "esp_log.h"
+#include "esp_heap_caps.h"
 
 using namespace std;
+
+static const char* TAG = "FileParser";
 
 FileParser::FileParser(string directory, string extension, uint32_t samplesPerSecond, bool loop) {
     this->directory = directory;
     this->extension = extension;
     this->loop = loop;
     this->sampleDuration_us = 1000 * 1000 / samplesPerSecond;
+
+    // Pre-load all files into PSRAM (safe since constructor runs in main thread)
+    preloadAllFiles();
 }
 
 FileParser::~FileParser() {
@@ -34,25 +41,62 @@ void FileParser::stop() {
     counter = -1;
 }
 
-void FileParser::loadNextSample() {
-    string frame_id = to_string(++counter);
+void FileParser::preloadAllFiles() {
+    ESP_LOGI(TAG, "Pre-loading files from %s", directory.c_str());
+    preloadedSamples.clear();
 
-    string url = directory + "/" + frame_id + extension;
-    ifstream source(url, ios_base::binary);
-    if (!source) {
-        if (loop && counter > 0) {
-            loopTimestampOffset = sampleTime_us;
-            counter = -1;
-            loadNextSample();
-            return;
+    int fileIndex = 0;
+    while (true) {
+        string url = directory + "/" + to_string(fileIndex) + extension;
+        ifstream source(url, ios_base::binary);
+        if (!source) {
+            // No more files
+            break;
         }
+
+        vector<char> contents((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
+
+        // Allocate in PSRAM
+        void* psram_data = heap_caps_malloc(contents.size(), MALLOC_CAP_SPIRAM);
+        if (!psram_data) {
+            ESP_LOGE(TAG, "Failed to allocate %zu bytes in PSRAM for %s", contents.size(), url.c_str());
+            continue;
+        }
+
+        // Copy to PSRAM
+        memcpy(psram_data, contents.data(), contents.size());
+
+        preloadedSamples.emplace_back(psram_data, contents.size());
+        ESP_LOGI(TAG, "Loaded %s: %zu bytes", url.c_str(), contents.size());
+
+        fileIndex++;
+    }
+
+    ESP_LOGI(TAG, "Pre-loaded %d files into PSRAM", fileIndex);
+}
+
+void FileParser::loadNextSample() {
+    ++counter;
+
+    if (preloadedSamples.empty()) {
         sample = {};
         return;
     }
 
-    vector<char> contents((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
-    auto *b = reinterpret_cast<const std::byte*>(contents.data());
-    sample.assign(b, b + contents.size());
+    if (counter >= (int)preloadedSamples.size()) {
+        if (loop && counter > 0) {
+            loopTimestampOffset = sampleTime_us;
+            counter = 0; // Reset to first file
+        } else {
+            sample = {};
+            return;
+        }
+    }
+
+    // Get pre-loaded sample from PSRAM (no flash access!)
+    const auto& buffer = preloadedSamples[counter];
+    auto* b = reinterpret_cast<const std::byte*>(buffer.data);
+    sample.assign(b, b + buffer.size);
     sampleTime_us += sampleDuration_us;
 }
 

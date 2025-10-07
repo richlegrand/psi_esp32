@@ -3,6 +3,6 @@ dependencies:
   joltwallet/littlefs: ^1.14.8
   idf:
     version: '>=5.0.0'
-  espressif/esp_wifi_remote: ~0.14.3
-  espressif/esp_hosted: ~2.0.13
+  espressif/esp_wifi_remote: "1.1.2"
+  espressif/esp_hosted: "2.5.3"
   espressif/sock_utils: "*"

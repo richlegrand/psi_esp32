@@ -1,12 +1,16 @@
 // ESP32-P4 libdatachannel H.264 WebRTC streamer
 #include <stdio.h>
 #include <string.h>
+#include <netdb.h>
+#include <arpa/inet.h>
 #include "esp_log.h"
+#include "esp_system.h"
 #include "esp_wifi.h"
 #include "esp_wifi_remote.h"  // ESP-Hosted WiFi Remote API
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "nvs_flash.h"
+#include "esp_littlefs.h"  // From joltwallet/littlefs component
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -14,6 +18,9 @@
 // WebRTC streaming functionality
 #include "rtc/rtc.hpp"
 #include "streamer.hpp"
+
+// ESP32 PSRAM configuration
+#include "esp32_psram_init.h"
 
 static const char *TAG = "h264_streamer";
 
@@ -115,8 +122,43 @@ static void wifi_init_sta(void) {
     ESP_LOGI(TAG, "wifi_init_sta finished.");
 }
 
+// Initialize LittleFS
+static void littlefs_init(void) {
+    ESP_LOGI(TAG, "Initializing LittleFS");
+
+    esp_vfs_littlefs_conf_t conf = {
+        .base_path = "/littlefs",
+        .partition_label = "storage",
+        .format_if_mount_failed = false,  // Don't format - we have media files
+        .dont_mount = false,
+    };
+
+    esp_err_t ret = esp_vfs_littlefs_register(&conf);
+    if (ret != ESP_OK) {
+        if (ret == ESP_FAIL) {
+            ESP_LOGE(TAG, "Failed to mount LittleFS");
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            ESP_LOGE(TAG, "Failed to find LittleFS partition");
+        } else {
+            ESP_LOGE(TAG, "Failed to initialize LittleFS (%s)", esp_err_to_name(ret));
+        }
+        return;
+    }
+
+    size_t total = 0, used = 0;
+    ret = esp_littlefs_info("storage", &total, &used);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to get LittleFS partition information (%s)", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "LittleFS partition size: total: %d KB, used: %d KB", total/1024, used/1024);
+    }
+}
+
 extern "C" void app_main(void) {
     ESP_LOGI(TAG, "Starting H.264 WebRTC streamer...");
+
+    // Configure pthread to use PSRAM for thread stacks (critical for usrsctp)
+    esp32_configure_pthread_psram();
 
     // Initialize NVS (required for WiFi)
     esp_err_t ret = nvs_flash_init();
@@ -125,6 +167,9 @@ extern "C" void app_main(void) {
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    // Initialize LittleFS for H.264 media files
+    littlefs_init();
 
     // Initialize WiFi with ESP-Hosted
     ESP_LOGI(TAG, "Initializing WiFi with ESP-Hosted...");
@@ -161,6 +206,17 @@ extern "C" void app_main(void) {
         ESP_LOGE(TAG, "UNEXPECTED EVENT");
         return;
     }
+
+    // Test DNS resolution before WebRTC initialization
+    ESP_LOGI(TAG, "Testing DNS resolution...");
+    struct hostent *he = gethostbyname("google.com");
+    if (he != NULL) {
+        ESP_LOGI(TAG, "DNS test SUCCESS: google.com resolved to %s",
+                 inet_ntoa(*(struct in_addr*)he->h_addr_list[0]));
+    } else {
+        ESP_LOGE(TAG, "DNS test FAILED: Could not resolve google.com");
+    }
+    ESP_LOGI(TAG, "DNS test completed");
 
     // Initialize libdatachannel for WebRTC
     rtc::InitLogger(rtc::LogLevel::Info);

@@ -123,10 +123,9 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
 )
 
 # Force include PSRAM allocation redirects for this component only
-# TEMPORARILY DISABLED - causes crash during global constructor phase
-# target_compile_options(${COMPONENT_LIB} PRIVATE
-#     -include esp32_malloc_redirect.h
-# )
+target_compile_options(${COMPONENT_LIB} PRIVATE
+    -include esp32_malloc_redirect.h
+)
 
 # ESP32-specific compiler flags
 target_compile_options(${COMPONENT_LIB} PRIVATE

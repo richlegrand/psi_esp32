@@ -59,9 +59,6 @@ std::unique_ptr<DispatchQueue> MainThread;
 /// Audio and video stream
 optional<shared_ptr<Stream>> avStream = nullopt;
 
-/// Static RTC configuration for WebSocket task
-static Configuration g_rtcConfig;
-
 // ESP32 hardcoded configuration
 const string h264SamplesDirectory = "/littlefs/h264";
 const string wsServerUrl = "ws://192.168.1.248:8000";
@@ -87,12 +84,14 @@ bool sendWebSocketMessage(const string& message) {
 
 /// Handle incoming WebSocket message
 void wsOnMessage(const char* message_str, Configuration config) {
+    printf("*0\n");
     cJSON *message = cJSON_Parse(message_str);
     if (!message) {
         ESP_LOGE(TAG, "Failed to parse JSON message");
         return;
     }
 
+    printf("*1\n");
     cJSON *id_item = cJSON_GetObjectItem(message, "id");
     if (!id_item || !cJSON_IsString(id_item)) {
         cJSON_Delete(message);
@@ -100,6 +99,7 @@ void wsOnMessage(const char* message_str, Configuration config) {
     }
     string id = id_item->valuestring;
 
+    printf("*2\n");
     cJSON *type_item = cJSON_GetObjectItem(message, "type");
     if (!type_item || !cJSON_IsString(type_item)) {
         cJSON_Delete(message);
@@ -107,27 +107,39 @@ void wsOnMessage(const char* message_str, Configuration config) {
     }
     string type = type_item->valuestring;
 
+#if 1
     if (type == "request") {
+        printf("*3\n");
         clients.emplace(id, createPeerConnection(config, id));
-    } else if (type == "answer") {
+    } 
+    else if (type == "answer") {
+        printf("*4\n");
         if (auto jt = clients.find(id); jt != clients.end()) {
             auto pc = jt->second->peerConnection;
             cJSON *sdp_item = cJSON_GetObjectItem(message, "sdp");
             if (sdp_item && cJSON_IsString(sdp_item)) {
                 string sdp = sdp_item->valuestring;
+                printf("*5\n");
                 auto description = Description(sdp, type);
+                printf("*6\n");
                 pc->setRemoteDescription(description);
             }
         }
     }
-    
+#endif
+
+    printf("*7\n");
     cJSON_Delete(message);
+    printf("*8\n");
 }
 
 shared_ptr<Client> createPeerConnection(const Configuration &config, string id) {
+    printf("**0\n");
     auto pc = make_shared<PeerConnection>(config);
+    printf("**0.5\n");
     auto client = make_shared<Client>(pc);
 
+    printf("**1\n");
     pc->onStateChange([id](PeerConnection::State state) {
         ESP_LOGI(TAG, "State: %s", state == PeerConnection::State::Connected ? "Connected" : "Disconnected");
         if (state == PeerConnection::State::Disconnected ||
@@ -137,29 +149,34 @@ shared_ptr<Client> createPeerConnection(const Configuration &config, string id) 
         }
     });
 
-    pc->onGatheringStateChange([](PeerConnection::GatheringState state) {
-        ESP_LOGI(TAG, "Gathering State: %s", 
+    printf("**2\n");
+    pc->onGatheringStateChange([id, pc](PeerConnection::GatheringState state) {
+        ESP_LOGI(TAG, "Gathering State: %s",
                  state == PeerConnection::GatheringState::Complete ? "Complete" : "In Progress");
+        if (state == PeerConnection::GatheringState::Complete) {
+            auto description = pc->localDescription();
+            if (description.has_value()) {
+                cJSON *message = cJSON_CreateObject();
+                cJSON_AddStringToObject(message, "id", id.c_str());
+                cJSON_AddStringToObject(message, "type", description->typeString().c_str());
+                cJSON_AddStringToObject(message, "sdp", string(description.value()).c_str());
+
+                char *message_str = cJSON_Print(message);
+                sendWebSocketMessage(string(message_str));
+                free(message_str);
+                cJSON_Delete(message);
+            }
+        }
     });
 
-    pc->onLocalDescription([id](Description description) {
-        cJSON *message = cJSON_CreateObject();
-        cJSON_AddStringToObject(message, "id", id.c_str());
-        cJSON_AddStringToObject(message, "type", description.typeString().c_str());
-        cJSON_AddStringToObject(message, "sdp", string(description).c_str());
-
-        char *message_str = cJSON_Print(message);
-        sendWebSocketMessage(string(message_str));
-        free(message_str);
-        cJSON_Delete(message);
-    });
-
+    printf("**4\n");
     auto video = Description::Video("video", Description::Direction::SendOnly);
     video.addH264Codec(102);  // payload type
     video.setBitrate(3000); // 3Mbps
 
     auto track = pc->addTrack(video);
     
+    printf("**5\n");
     // Setup RTP for H.264
     uint32_t ssrc = 42; // arbitrary SSRC
     auto rtpConfig = make_shared<RtpPacketizationConfig>(
@@ -168,6 +185,7 @@ shared_ptr<Client> createPeerConnection(const Configuration &config, string id) 
     auto packetizer = make_shared<H264RtpPacketizer>(
         H264RtpPacketizer::Separator::StartSequence, rtpConfig);
     
+    printf("**6\n");
     // Add RTCP SR reporter
     auto srReporter = make_shared<RtcpSrReporter>(rtpConfig);
     packetizer->addToChain(srReporter);
@@ -177,6 +195,10 @@ shared_ptr<Client> createPeerConnection(const Configuration &config, string id) 
     
     client->video = make_shared<ClientTrackData>(track, srReporter);
     client->setState(Client::State::WaitingForVideo);
+    printf("**7\n");
+
+    // Trigger offer creation and ICE gathering
+    pc->setLocalDescription();
 
     return client;
 };
@@ -264,13 +286,16 @@ void startStream() {
 
 // WebSocket receive task - runs in separate FreeRTOS task
 static void wsReceiveTask(void* param) {
+    Configuration* config = (Configuration*)param;
     char buffer[1024];
 
     while (ws_transport) {
         int len = esp_transport_read(ws_transport, buffer, sizeof(buffer) - 1, 1000);
         if (len > 0) {
             buffer[len] = '\0';
-            wsOnMessage(buffer, g_rtcConfig);
+            printf("*** 0\n");
+            wsOnMessage(buffer, *config);
+            printf("*** 1\n");
         } else if (len < 0) {
             ESP_LOGE(TAG, "WebSocket read error");
             break;
@@ -281,27 +306,22 @@ static void wsReceiveTask(void* param) {
     vTaskDelete(NULL);
 }
 
-static void wsReceive(void) {
-    char buffer[1024];
-
-    int len = esp_transport_read(ws_transport, buffer, sizeof(buffer) - 1, 1000);
-    if (len > 0) {
-        buffer[len] = '\0';
-        wsOnMessage(buffer, g_rtcConfig);
-    } else if (len < 0) {
-        ESP_LOGE(TAG, "WebSocket read error");
-    }
-    // len == 0 means timeout, continue
-}
-
 void startStreamer() {
     InitLogger(LogLevel::Info);
+
+    // Check memory availability before WebRTC initialization
+    printf("Memory status before WebRTC init:\n");
+    printf("  Total free: %d KB\n", heap_caps_get_free_size(MALLOC_CAP_DEFAULT) / 1024);
+    printf("  Internal free: %d KB\n", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+    printf("  DMA free: %d KB\n", heap_caps_get_free_size(MALLOC_CAP_DMA) / 1024);
+    printf("  DMA+Internal free: %d KB\n", heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL) / 1024);
 
     // Initialize the main dispatch queue now (not as global constructor)
     MainThread = std::make_unique<DispatchQueue>("Main");
 
-    // Initialize global RTC configuration
-    g_rtcConfig.iceServers.push_back({"stun:stun.l.google.com:19302"});
+    Configuration rtcConfig;
+    // Add STUN servers for NAT traversal
+    rtcConfig.iceServers.push_back({"stun:stun.l.google.com:19302"});
 
     // Connect to signaling server using ESP-IDF WebSocket transport
     esp_transport_handle_t tcp_transport = esp_transport_tcp_init();
@@ -320,7 +340,7 @@ void startStreamer() {
     // Parse WebSocket URL - simplified for ws://host:port format
     string host = "192.168.1.248";  // Extract from wsServerUrl
     int port = 8000;
-    string path = "/";
+    string path = "/server";  // Identify this client as "server" to the signaling server
 
     esp_transport_ws_set_path(ws_transport, path.c_str());
 
@@ -339,7 +359,13 @@ void startStreamer() {
 
     // Start task to handle incoming WebSocket messages
     // Use static function for FreeRTOS compatibility (not lambda)
-    xTaskCreate(wsReceiveTask, "ws_recv", 8192, nullptr, 5, NULL);
-    //wsReceive();
+    xTaskCreate(wsReceiveTask, "ws_recv", 20480, &rtcConfig, 5, NULL);
     ESP_LOGI(TAG, "Streamer ready, waiting for connections...");
+
+    // Keep running forever - rtcConfig must stay alive for wsReceiveTask
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(10000)); // 10 second delay
+        ESP_LOGI(TAG, "Streamer active - Free heap: %lu KB", esp_get_free_heap_size() / 1024);
+    }
+
 }

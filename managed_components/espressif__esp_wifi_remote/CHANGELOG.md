@@ -1,5 +1,100 @@
 # Changelog
 
+## [1.1.2](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.1.2)
+
+### Bug Fixes
+
+- Update per breaking changes on v6.0 ([1065605](https://github.com/espressif/esp-wifi-remote/commit/1065605))
+
+## [1.1.1](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.1.1)
+
+### Bug Fixes
+
+- Minor update per v5.3 ([46ca900](https://github.com/espressif/esp-wifi-remote/commit/46ca900))
+
+## [1.1.0](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.1.0)
+
+### Features
+
+- Support for IDF v5.3-tag ([6d16d44](https://github.com/espressif/esp-wifi-remote/commit/6d16d44))
+
+### Bug Fixes
+
+- Update per Kconfig changes on v6.0 ([74a6aa8](https://github.com/espressif/esp-wifi-remote/commit/74a6aa8))
+
+## [1.0.1](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.0.1)
+
+### Features
+
+- Add target test with esp_hosted ([6c67584](https://github.com/espressif/esp-wifi-remote/commit/6c67584))
+
+### Bug Fixes
+
+- Update types/comments on v5.4 ([502e937](https://github.com/espressif/esp-wifi-remote/commit/502e937))
+- Split two station example into local/remote sources ([79ef9d6](https://github.com/espressif/esp-wifi-remote/commit/79ef9d6))
+
+## [1.0.0](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.0.0)
+
+### Features
+
+- Support two wifi interfaces for esp-hosted backend ([07b51b0](https://github.com/espressif/esp-wifi-remote/commit/07b51b0))
+
+### Bug Fixes
+
+- Update two-station example to set local/remote wifi on/off ([b4985aa](https://github.com/espressif/esp-wifi-remote/commit/b4985aa))
+- Make server CN configurable ([e5d3fb2](https://github.com/espressif/esp-wifi-remote/commit/e5d3fb2))
+- Update gitignore for external-components ([e8b5270](https://github.com/espressif/esp-wifi-remote/commit/e8b5270))
+
+## [0.16.3](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.16.3)
+
+### Bug Fixes
+
+- Add C++ guards to all generated headers ([13f3d09](https://github.com/espressif/esp-wifi-remote/commit/13f3d09))
+- Generate headers with C++ guards ([0677e0c](https://github.com/espressif/esp-wifi-remote/commit/0677e0c))
+
+## [0.16.2](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.16.2)
+
+### Bug Fixes
+
+- Update READMEs with latest description ([798e6f0](https://github.com/espressif/esp-wifi-remote/commit/798e6f0))
+- Minor update per v5.4 changes ([7df45ba](https://github.com/espressif/esp-wifi-remote/commit/7df45ba))
+
+## [0.16.1](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.16.1)
+
+### Bug Fixes
+
+- Add v5.5 tagged version ([c7038df](https://github.com/espressif/esp-wifi-remote/commit/c7038df), [#66](https://github.com/espressif/esp-wifi-remote/issues/66))
+
+## [0.16.0](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.16.0)
+
+### Features
+
+- Decouple EPPP RPC into a sub-component ([96cba4a](https://github.com/espressif/esp-wifi-remote/commit/96cba4a))
+
+## [0.15.3](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.15.3)
+
+### Bug Fixes
+
+- Update per v6.0 changes ([2d4e5d2](https://github.com/espressif/esp-wifi-remote/commit/2d4e5d2))
+
+## [0.15.2](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.15.2)
+
+### Bug Fixes
+
+- Update per v5.5 changes ([a6ceb27](https://github.com/espressif/esp-wifi-remote/commit/a6ceb27))
+
+## [0.15.1](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.15.1)
+
+### Bug Fixes
+
+- Update per v5.4 changes ([ca2ed62](https://github.com/espressif/esp-wifi-remote/commit/ca2ed62))
+
+## [0.15.0](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.15.0)
+
+### Bug Fixes
+
+- Add support for v5.4.2 IDF release tag ([4809209](https://github.com/espressif/esp-wifi-remote/commit/4809209))
+
 ## [0.14.5](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v0.14.5)
 
 ### Bug Fixes
