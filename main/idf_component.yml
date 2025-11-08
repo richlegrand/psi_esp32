@@ -6,3 +6,4 @@ dependencies:
   espressif/esp_wifi_remote: "1.1.2"
   espressif/esp_hosted: "2.5.3"
   espressif/sock_utils: "*"
+  espressif/esp_websocket_client: "^1.5.0"

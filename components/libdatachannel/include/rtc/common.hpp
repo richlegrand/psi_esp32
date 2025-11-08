@@ -54,6 +54,38 @@
 #include <variant>
 #include <vector>
 
+// ESP32 PSRAM allocator - must be defined before rtc namespace
+#ifdef ESP32_PORT
+#include <esp_heap_caps.h>
+
+template<typename T>
+class PSRAMAllocator {
+public:
+	using value_type = T;
+
+	PSRAMAllocator() = default;
+	template<typename U> PSRAMAllocator(const PSRAMAllocator<U>&) {}
+
+	T* allocate(std::size_t n) {
+		size_t bytes = n * sizeof(T);
+		if (auto p = static_cast<T*>(heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM))) {
+			return p;
+		}
+		throw std::bad_alloc();
+	}
+
+	void deallocate(T* p, std::size_t) {
+		heap_caps_free(p);
+	}
+};
+
+template<typename T, typename U>
+bool operator==(const PSRAMAllocator<T>&, const PSRAMAllocator<U>&) { return true; }
+
+template<typename T, typename U>
+bool operator!=(const PSRAMAllocator<T>&, const PSRAMAllocator<U>&) { return false; }
+#endif
+
 namespace rtc {
 
 using std::byte;
@@ -66,7 +98,20 @@ using std::unique_ptr;
 using std::variant;
 using std::weak_ptr;
 
+#ifdef ESP32_PORT
+using binary = std::vector<byte, PSRAMAllocator<byte>>;
+
+// Generic PSRAM vector for any type
+template<typename T>
+using psram_vector = std::vector<T, PSRAMAllocator<T>>;
+#else
 using binary = std::vector<byte>;
+
+// On non-ESP32, psram_vector is just std::vector
+template<typename T>
+using psram_vector = std::vector<T>;
+#endif
+
 using message_variant = variant<binary, string>;
 
 using std::int16_t;

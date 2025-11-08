@@ -16,6 +16,17 @@
 #include <cstring>
 #include <exception>
 
+#ifdef ESP32_PORT
+#include <esp_heap_caps.h>
+#define HEAP_CHECK(label) do { \
+    size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL); \
+    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM); \
+    PLOG_WARNING << "HEAP[" << label << "]: DMA=" << dma_free << ", PSRAM=" << psram_free; \
+} while(0)
+#else
+#define HEAP_CHECK(label)
+#endif
+
 using std::to_integer;
 using std::to_string;
 

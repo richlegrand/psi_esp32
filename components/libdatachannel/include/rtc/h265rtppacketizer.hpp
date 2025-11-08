@@ -38,8 +38,13 @@ public:
 	                  size_t maxFragmentSize = DefaultMaxFragmentSize);
 
 private:
+#ifdef ESP32_PORT
+	psram_vector<binary> fragment(binary data) override;
+	psram_vector<H265NalUnit> splitFrame(const binary &frame);
+#else
 	std::vector<binary> fragment(binary data) override;
 	std::vector<H265NalUnit> splitFrame(const binary &frame);
+#endif
 
 	const NalUnit::Separator mSeparator;
 	const size_t mMaxFragmentSize;

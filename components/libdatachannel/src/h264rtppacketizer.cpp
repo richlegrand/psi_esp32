@@ -21,6 +21,17 @@
 #include <arpa/inet.h>
 #endif
 
+#ifdef ESP32_PORT
+#include <esp_heap_caps.h>
+#define HEAP_CHECK(label) do { \
+    size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL); \
+    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM); \
+    PLOG_WARNING << "HEAP[" << label << "]: DMA=" << dma_free << ", PSRAM=" << psram_free; \
+} while(0)
+#else
+#define HEAP_CHECK(label)
+#endif
+
 namespace rtc {
 
 H264RtpPacketizer::H264RtpPacketizer(shared_ptr<RtpPacketizationConfig> rtpConfig,
@@ -32,12 +43,21 @@ H264RtpPacketizer::H264RtpPacketizer(Separator separator,
                                      size_t maxFragmentSize)
     : RtpPacketizer(rtpConfig), mSeparator(separator), mMaxFragmentSize(maxFragmentSize) {}
 
+#ifdef ESP32_PORT
+psram_vector<binary> H264RtpPacketizer::fragment(binary data) {
+	return NalUnit::GenerateFragments(splitFrame(data), mMaxFragmentSize);
+}
+
+psram_vector<NalUnit> H264RtpPacketizer::splitFrame(const binary &frame) {
+	psram_vector<NalUnit> nalus;
+#else
 std::vector<binary> H264RtpPacketizer::fragment(binary data) {
 	return NalUnit::GenerateFragments(splitFrame(data), mMaxFragmentSize);
 }
 
 std::vector<NalUnit> H264RtpPacketizer::splitFrame(const binary &frame) {
 	std::vector<NalUnit> nalus;
+#endif
 	if (mSeparator == Separator::Length) {
 		size_t index = 0;
 		while (index < frame.size()) {

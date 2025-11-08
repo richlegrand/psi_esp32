@@ -20,7 +20,14 @@ namespace rtc {
 
 class RTC_CPP_EXPORT RtcpNackResponder final : public MediaHandler {
 public:
+#ifdef ESP32_PORT
+	// ESP32 has very limited DMA memory (~170KB total). With 512 packets × 124 bytes
+	// per storage × 2 storages (audio+video) = 127KB, leaving almost no DMA for network.
+	// Reduce to 64 packets (8KB per storage, 16KB total) to leave room for network stack.
+	static const size_t DefaultMaxSize = 64;
+#else
 	static const size_t DefaultMaxSize = 512;
+#endif
 
 	RtcpNackResponder(size_t maxSize = DefaultMaxSize);
 

@@ -71,9 +71,10 @@ void Stream::sendSample() {
     auto ssSST = unsafePrepareForSample();
     auto ss = ssSST.first;
     auto sst = ssSST.second;
-    auto sample = ss->getSample();
-    sampleHandler(sst, ss->getSampleTime_us(), sample);
-    ss->loadNextSample();
+    auto sample = ss->getSample();  // Get by value so we can move it
+    auto sampleTime = ss->getSampleTime_us();
+    ss->loadNextSample();  // Load next BEFORE handler, so sample can be moved
+    sampleHandler(sst, sampleTime, std::move(sample));  // Move sample to avoid copy
     dispatchQueue.dispatch([this]() {
         this->sendSample();
     });

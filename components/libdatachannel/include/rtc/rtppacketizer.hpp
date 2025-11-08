@@ -43,7 +43,11 @@ protected:
 	/// Fragment data into payloads
 	/// Default implementation returns data as a single payload
 	/// @param message Input data
+#ifdef ESP32_PORT
+	virtual psram_vector<binary> fragment(binary data);
+#else
 	virtual std::vector<binary> fragment(binary data);
+#endif
 
 	/// Creates an RTP packet for a payload
 	/// @note This function increases the sequence number.

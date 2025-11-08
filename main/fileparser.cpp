@@ -101,7 +101,7 @@ void FileParser::loadNextSample() {
 }
 
 rtc::binary FileParser::getSample() {
-	return sample;
+	return std::move(sample);
 }
 
 uint64_t FileParser::getSampleTime_us() {

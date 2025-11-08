@@ -67,8 +67,13 @@ struct NalUnitFragmentA;
 
 /// NAL unit
 struct RTC_CPP_EXPORT NalUnit : binary {
+#ifdef ESP32_PORT
+	static psram_vector<binary> GenerateFragments(const psram_vector<NalUnit> &nalus,
+	                                             size_t maxFragmentSize);
+#else
 	static std::vector<binary> GenerateFragments(const std::vector<NalUnit> &nalus,
 	                                             size_t maxFragmentSize);
+#endif
 
 	enum class Separator {
 		Length = RTC_NAL_SEPARATOR_LENGTH, // first 4 bytes are NAL unit length
@@ -111,7 +116,11 @@ struct RTC_CPP_EXPORT NalUnit : binary {
 		insert(end(), payload.begin(), payload.end());
 	}
 
+#ifdef ESP32_PORT
+	psram_vector<NalUnitFragmentA> generateFragments(size_t maxFragmentSize) const;
+#else
 	std::vector<NalUnitFragmentA> generateFragments(size_t maxFragmentSize) const;
+#endif
 
 protected:
 	const NalUnitHeader *header() const {

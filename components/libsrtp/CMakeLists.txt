@@ -20,7 +20,8 @@ set(SRTP_SOURCES
     ${LIBSRTP_ROOT}/crypto/cipher/null_cipher.c
     ${LIBSRTP_ROOT}/crypto/cipher/aes.c
     ${LIBSRTP_ROOT}/crypto/cipher/aes_icm_mbedtls.c
-    ${LIBSRTP_ROOT}/crypto/cipher/aes_gcm_mbedtls.c
+    # Disable GCM temporarily - causing init failure
+    # ${LIBSRTP_ROOT}/crypto/cipher/aes_gcm_mbedtls.c
     ${LIBSRTP_ROOT}/crypto/cipher/cipher_test_cases.c
     
     # Hash/Auth - MbedTLS variants
@@ -58,7 +59,8 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/config.h" "
 
 /* Use MbedTLS for crypto */
 #define USE_MBEDTLS 1
-#define GCM 1
+/* Disable GCM temporarily to test */
+/* #define GCM 1 */
 
 /* Standard types */
 #define HAVE_STDLIB_H 1
@@ -86,8 +88,9 @@ file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/config.h" "
 /* #undef OPENSSL */
 /* #undef NSS */
 
-/* Endianness */
-#define WORDS_BIGENDIAN 0
+/* Endianness - ESP32 is little-endian, leave WORDS_BIGENDIAN undefined
+   so that #ifndef WORDS_BIGENDIAN succeeds and uses little-endian bitfield layout */
+/* #undef WORDS_BIGENDIAN */
 
 /* Make sure we use standard types */
 #define HAVE_STDINT_H 1

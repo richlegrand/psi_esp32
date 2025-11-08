@@ -36,10 +36,17 @@ public:
 	                 size_t maxFragmentSize = DefaultMaxFragmentSize);
 
 private:
+#ifdef ESP32_PORT
+	static psram_vector<binary> extractTemporalUnitObus(const binary &data);
+
+	psram_vector<binary> fragment(binary data) override;
+	psram_vector<binary> fragmentObu(const binary &data);
+#else
 	static std::vector<binary> extractTemporalUnitObus(const binary &data);
 
 	std::vector<binary> fragment(binary data) override;
 	std::vector<binary> fragmentObu(const binary &data);
+#endif
 
 	const Packetization mPacketization;
 	const size_t mMaxFragmentSize;

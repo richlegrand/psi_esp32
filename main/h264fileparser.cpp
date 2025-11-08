@@ -53,8 +53,8 @@ void H264FileParser::loadNextSample() {
     }
 }
 
-vector<std::byte> H264FileParser::initialNALUS() {
-    vector<std::byte> units{};
+rtc::binary H264FileParser::initialNALUS() {
+    rtc::binary units{};
     if (previousUnitType7.has_value()) {
         auto nalu = previousUnitType7.value();
         units.insert(units.end(), nalu.begin(), nalu.end());

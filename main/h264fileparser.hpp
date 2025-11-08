@@ -21,7 +21,7 @@ class H264FileParser: public FileParser {
 public:
     H264FileParser(std::string directory, uint32_t fps, bool loop);
     void loadNextSample() override;
-    std::vector<std::byte> initialNALUS();
+    rtc::binary initialNALUS();
 };
 
 #endif /* h264fileparser_hpp */

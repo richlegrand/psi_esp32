@@ -12,6 +12,17 @@
 #include "peerconnection.hpp"
 #include "rtp.hpp"
 
+#ifdef ESP32_PORT
+#include <esp_heap_caps.h>
+#define HEAP_CHECK(label) do { \
+    size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL); \
+    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM); \
+    PLOG_WARNING << "HEAP[" << label << "]: DMA=" << dma_free << ", PSRAM=" << psram_free; \
+} while(0)
+#else
+#define HEAP_CHECK(label)
+#endif
+
 namespace rtc::impl {
 
 static LogCounter COUNTER_MEDIA_BAD_DIRECTION(plog::warning,
@@ -186,6 +197,7 @@ bool Track::outgoing(message_ptr message) {
 
 	if (handler) {
 		message_vector messages{std::move(message)};
+
 		handler->outgoingChain(messages, [this, weak_this = weak_from_this()](message_ptr m) {
 			if (auto locked = weak_this.lock()) {
 				transportSend(m);

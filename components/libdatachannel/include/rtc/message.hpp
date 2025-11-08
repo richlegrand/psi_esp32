@@ -38,7 +38,12 @@ struct RTC_CPP_EXPORT Message : binary {
 
 using message_ptr = shared_ptr<Message>;
 using message_callback = std::function<void(message_ptr message)>;
+
+#ifdef ESP32_PORT
+using message_vector = std::vector<message_ptr, PSRAMAllocator<message_ptr>>;
+#else
 using message_vector = std::vector<message_ptr>;
+#endif
 
 inline size_t message_size_func(const message_ptr &m) {
 	return m->type == Message::Binary || m->type == Message::String ? m->size() : 0;

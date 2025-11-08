@@ -13,16 +13,35 @@
 #include <cmath>
 #include <cstring>
 
+#ifdef ESP32_PORT
+#include <esp_heap_caps.h>
+#include "impl/internals.hpp"
+#define HEAP_CHECK(label) do { \
+    size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL); \
+    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM); \
+    PLOG_WARNING << "HEAP[" << label << "]: DMA=" << dma_free << ", PSRAM=" << psram_free; \
+} while(0)
+#else
+#define HEAP_CHECK(label)
+#endif
+
 namespace rtc {
 
 RtpPacketizer::RtpPacketizer(shared_ptr<RtpPacketizationConfig> rtpConfig) : rtpConfig(rtpConfig) {}
 
 RtpPacketizer::~RtpPacketizer() {}
 
+#ifdef ESP32_PORT
+psram_vector<binary> RtpPacketizer::fragment(binary data) {
+	// Default implementation
+	return {std::move(data)};
+}
+#else
 std::vector<binary> RtpPacketizer::fragment(binary data) {
 	// Default implementation
 	return {std::move(data)};
 }
+#endif
 
 message_ptr RtpPacketizer::packetize(const binary &payload, bool mark) {
 	size_t rtpExtHeaderSize = 0;
@@ -157,6 +176,7 @@ void RtpPacketizer::media([[maybe_unused]] const Description::Media &desc) {}
 void RtpPacketizer::outgoing(message_vector &messages,
                              [[maybe_unused]] const message_callback &send) {
 	message_vector result;
+
 	for (const auto &message : messages) {
 		if (const auto &frameInfo = message->frameInfo) {
 			if (frameInfo->payloadType && frameInfo->payloadType != rtpConfig->payloadType)
@@ -172,6 +192,7 @@ void RtpPacketizer::outgoing(message_vector &messages,
 		}
 
 		auto payloads = fragment(std::move(*message));
+
 		for (size_t i = 0; i < payloads.size(); i++) {
 			if (rtpConfig->dependencyDescriptorContext.has_value()) {
 				auto &ctx = *rtpConfig->dependencyDescriptorContext;
@@ -179,7 +200,9 @@ void RtpPacketizer::outgoing(message_vector &messages,
 				ctx.descriptor.endOfFrame = i == payloads.size() - 1;
 			}
 			bool mark = i == payloads.size() - 1;
-			result.push_back(packetize(payloads[i], mark));
+
+			auto packet = packetize(payloads[i], mark);
+			result.push_back(packet);
 		}
 	}
 

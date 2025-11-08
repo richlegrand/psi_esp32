@@ -14,11 +14,28 @@
 
 #include <cmath>
 
+#ifdef ESP32_PORT
+#include <esp_heap_caps.h>
+#define HEAP_CHECK(label) do { \
+    size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL); \
+    size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM); \
+    PLOG_WARNING << "HEAP[" << label << "]: DMA=" << dma_free << ", PSRAM=" << psram_free; \
+} while(0)
+#else
+#define HEAP_CHECK(label)
+#endif
+
 namespace rtc {
 
+#ifdef ESP32_PORT
+psram_vector<binary> NalUnit::GenerateFragments(const psram_vector<NalUnit> &nalus,
+                                               size_t maxFragmentSize) {
+	psram_vector<binary> result;
+#else
 std::vector<binary> NalUnit::GenerateFragments(const std::vector<NalUnit> &nalus,
                                                size_t maxFragmentSize) {
 	std::vector<binary> result;
+#endif
 	for (const auto &nalu : nalus) {
 		if (nalu.size() > maxFragmentSize) {
 			auto fragments = nalu.generateFragments(maxFragmentSize);
@@ -31,6 +48,22 @@ std::vector<binary> NalUnit::GenerateFragments(const std::vector<NalUnit> &nalus
 	return result;
 }
 
+#ifdef ESP32_PORT
+psram_vector<NalUnitFragmentA> NalUnit::generateFragments(size_t maxFragmentSize) const {
+	assert(size() > maxFragmentSize);
+	// TODO: check this
+	auto fragments_count = ceil(double(size()) / maxFragmentSize);
+	maxFragmentSize = uint16_t(int(ceil(size() / fragments_count)));
+
+	// 2 bytes for FU indicator and FU header
+	maxFragmentSize -= 2;
+	auto f = forbiddenBit();
+	uint8_t nri = this->nri() & 0x03;
+	uint8_t unitType = this->unitType() & 0x1F;
+	auto payload = this->payload();
+	size_t offset = 0;
+	psram_vector<NalUnitFragmentA> result;
+#else
 std::vector<NalUnitFragmentA> NalUnit::generateFragments(size_t maxFragmentSize) const {
 	assert(size() > maxFragmentSize);
 	// TODO: check this
@@ -45,8 +78,9 @@ std::vector<NalUnitFragmentA> NalUnit::generateFragments(size_t maxFragmentSize)
 	auto payload = this->payload();
 	size_t offset = 0;
 	std::vector<NalUnitFragmentA> result;
+#endif
 	while (offset < payload.size()) {
-		vector<byte> fragmentData;
+		binary fragmentData;  // Use rtc::binary (with PSRAM allocator on ESP32)
 		using FragmentType = NalUnitFragmentA::FragmentType;
 		FragmentType fragmentType;
 		if (offset == 0) {
@@ -59,8 +93,8 @@ std::vector<NalUnitFragmentA> NalUnit::generateFragments(size_t maxFragmentSize)
 			}
 			fragmentType = FragmentType::End;
 		}
-		fragmentData = {payload.begin() + offset, payload.begin() + offset + maxFragmentSize};
-		result.emplace_back(fragmentType, f, nri, unitType, fragmentData);
+		fragmentData.assign(payload.begin() + offset, payload.begin() + offset + maxFragmentSize);
+		result.emplace_back(fragmentType, f, nri, unitType, std::move(fragmentData));
 		offset += maxFragmentSize;
 	}
 	return result;
@@ -151,7 +185,11 @@ void NalUnitFragmentA::setFragmentType(FragmentType type) {
 
 // For backward compatibility, do not use
 std::vector<shared_ptr<binary>> NalUnits::generateFragments(uint16_t maxFragmentSize) {
+#ifdef ESP32_PORT
+	psram_vector<NalUnit> nalus;
+#else
 	std::vector<NalUnit> nalus;
+#endif
 	for (auto nalu : *this)
 		nalus.push_back(*nalu);
 

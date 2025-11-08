@@ -45,8 +45,13 @@ AV1RtpPacketizer::AV1RtpPacketizer(Packetization packetization,
                                    size_t maxFragmentSize)
     : RtpPacketizer(rtpConfig), mPacketization(packetization), mMaxFragmentSize(maxFragmentSize) {}
 
+#ifdef ESP32_PORT
+psram_vector<binary> AV1RtpPacketizer::extractTemporalUnitObus(const binary &data) {
+	psram_vector<binary> obus;
+#else
 std::vector<binary> AV1RtpPacketizer::extractTemporalUnitObus(const binary &data) {
 	std::vector<binary> obus;
+#endif
 
 	if (data.size() <= 2 || (data.at(0) != obuTemporalUnitDelimiter.at(0)) ||
 	    (data.at(1) != obuTemporalUnitDelimiter.at(1))) {
@@ -91,9 +96,15 @@ std::vector<binary> AV1RtpPacketizer::extractTemporalUnitObus(const binary &data
 	return obus;
 }
 
+#ifdef ESP32_PORT
+psram_vector<binary> AV1RtpPacketizer::fragment(binary data) {
+	if (mPacketization == AV1RtpPacketizer::Packetization::TemporalUnit) {
+		psram_vector<binary> result;
+#else
 std::vector<binary> AV1RtpPacketizer::fragment(binary data) {
 	if (mPacketization == AV1RtpPacketizer::Packetization::TemporalUnit) {
 		std::vector<binary> result;
+#endif
 		auto obus = extractTemporalUnitObus(data);
 		for (auto obu : obus) {
 			auto fragments = fragmentObu(obu);
@@ -138,8 +149,13 @@ std::vector<binary> AV1RtpPacketizer::fragment(binary data) {
  *
  **/
 
+#ifdef ESP32_PORT
+psram_vector<binary> AV1RtpPacketizer::fragmentObu(const binary &data) {
+	psram_vector<binary> payloads;
+#else
 std::vector<binary> AV1RtpPacketizer::fragmentObu(const binary &data) {
 	std::vector<binary> payloads;
+#endif
 
 	if (data.size() < 1)
 		return {};

@@ -32,12 +32,21 @@ H265RtpPacketizer::H265RtpPacketizer(NalUnit::Separator separator,
                                      size_t maxFragmentSize)
     : RtpPacketizer(std::move(rtpConfig)), mSeparator(separator), mMaxFragmentSize(maxFragmentSize) {}
 
+#ifdef ESP32_PORT
+psram_vector<binary> H265RtpPacketizer::fragment(binary data) {
+	return H265NalUnit::GenerateFragments(splitFrame(data), mMaxFragmentSize);
+}
+
+psram_vector<H265NalUnit> H265RtpPacketizer::splitFrame(const binary &frame) {
+	psram_vector<H265NalUnit> nalus;
+#else
 std::vector<binary> H265RtpPacketizer::fragment(binary data) {
 	return H265NalUnit::GenerateFragments(splitFrame(data), mMaxFragmentSize);
 }
 
 std::vector<H265NalUnit> H265RtpPacketizer::splitFrame(const binary &frame) {
 	std::vector<H265NalUnit> nalus;
+#endif
 	if (mSeparator == NalUnit::Separator::Length) {
 		size_t index = 0;
 		while (index < frame.size()) {

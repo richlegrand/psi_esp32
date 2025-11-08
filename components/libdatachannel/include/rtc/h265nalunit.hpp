@@ -77,8 +77,13 @@ struct H265NalUnitFragment;
 
 /// NAL unit
 struct RTC_CPP_EXPORT H265NalUnit : NalUnit {
+#ifdef ESP32_PORT
+	static psram_vector<binary> GenerateFragments(const psram_vector<H265NalUnit> &nalus,
+	                                             size_t maxFragmentSize);
+#else
 	static std::vector<binary> GenerateFragments(const std::vector<H265NalUnit> &nalus,
 	                                             size_t maxFragmentSize);
+#endif
 
 	H265NalUnit(const H265NalUnit &unit) = default;
 	H265NalUnit(size_t size, bool includingHeader = true)
@@ -110,7 +115,11 @@ struct RTC_CPP_EXPORT H265NalUnit : NalUnit {
 		insert(end(), payload.begin(), payload.end());
 	}
 
+#ifdef ESP32_PORT
+	psram_vector<H265NalUnitFragment> generateFragments(size_t maxFragmentSize) const;
+#else
 	std::vector<H265NalUnitFragment> generateFragments(size_t maxFragmentSize) const;
+#endif
 
 protected:
 	const H265NalUnitHeader *header() const {
