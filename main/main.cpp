@@ -1,8 +1,6 @@
 // ESP32-P4 libdatachannel H.264 WebRTC streamer
 #include <stdio.h>
 #include <string.h>
-#include <netdb.h>
-#include <arpa/inet.h>
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
@@ -207,30 +205,13 @@ extern "C" void app_main(void) {
         return;
     }
 
-    // Test DNS resolution before WebRTC initialization
-    ESP_LOGI(TAG, "Testing DNS resolution...");
-    struct hostent *he = gethostbyname("google.com");
-    if (he != NULL) {
-        ESP_LOGI(TAG, "DNS test SUCCESS: google.com resolved to %s",
-                 inet_ntoa(*(struct in_addr*)he->h_addr_list[0]));
-    } else {
-        ESP_LOGE(TAG, "DNS test FAILED: Could not resolve google.com");
-    }
-    ESP_LOGI(TAG, "DNS test completed");
-
     // Initialize libdatachannel for WebRTC
     rtc::InitLogger(rtc::LogLevel::Info);
-    ESP_LOGI(TAG, "InitLogger called successfully");
 
     // ESP32: Start networking threads now that FreeRTOS scheduler is running
-    ESP_LOGI(TAG, "Starting networking threads...");
     rtc::StartNetworking();
-    ESP_LOGI(TAG, "Networking threads started successfully");
 
     // Start the H.264 WebRTC streamer
-    ESP_LOGI(TAG, "Starting H.264 streamer...");
+    ESP_LOGI(TAG, "Starting WebRTC streamer...");
     startStreamer();
-
-    // The streamer runs in its own context, main task can exit
-    ESP_LOGI(TAG, "H.264 streamer started successfully");
 }

@@ -1,50 +1,13 @@
 // ESP32 compatibility functions for USRSCTP
 #include <time.h>
 #include <errno.h>
-#include <sys/socket.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <esp_log.h>
 
 static const char* TAG = "usrsctp_compat";
 
-// Minimal ifaddrs structure for ESP32
-struct ifaddrs {
-    struct ifaddrs  *ifa_next;    /* Next item in list */
-    char            *ifa_name;    /* Name of interface */
-    unsigned int     ifa_flags;   /* Flags from SIOCGIFFLAGS */
-    struct sockaddr *ifa_addr;    /* Address of interface */
-    struct sockaddr *ifa_netmask; /* Netmask of interface */
-    union {
-        struct sockaddr *ifu_broadaddr; /* Broadcast address */
-        struct sockaddr *ifu_dstaddr;   /* Point-to-point destination address */
-    } ifa_ifu;
-    void            *ifa_data;    /* Address-specific data */
-};
-
-#define ifa_broadaddr ifa_ifu.ifu_broadaddr
-#define ifa_dstaddr   ifa_ifu.ifu_dstaddr
-
-// Simple implementation of getifaddrs for ESP32
-int getifaddrs(struct ifaddrs **ifap) {
-    if (!ifap) {
-        errno = EINVAL;
-        return -1;
-    }
-    
-    ESP_LOGD(TAG, "getifaddrs called - returning empty interface list for ESP32");
-    
-    // For ESP32, return empty list
-    // USRSCTP can work without specific interface enumeration
-    *ifap = NULL;
-    return 0;
-}
-
-void freeifaddrs(struct ifaddrs *ifa) {
-    // Nothing to free in our minimal implementation
-    (void)ifa;
-    ESP_LOGD(TAG, "freeifaddrs called");
-}
+// Note: getifaddrs() and freeifaddrs() are provided by libdatachannel/esp32_sockutils.cpp
 
 // nanosleep implementation using FreeRTOS delay
 int nanosleep(const struct timespec *req, struct timespec *rem) {

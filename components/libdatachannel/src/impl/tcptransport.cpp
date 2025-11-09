@@ -18,7 +18,7 @@
 #endif
 
 #ifdef ESP_PLATFORM
-// ESP32 compatibility - sock_utils provides getnameinfo implementation
+// ESP32 compatibility - esp32_sockutils.cpp provides getnameinfo implementation
 // but we may still need the flag definitions
 #ifndef NI_NUMERICHOST
 #define NI_NUMERICHOST 1

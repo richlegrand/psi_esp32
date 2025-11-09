@@ -59,7 +59,7 @@ set(SOURCES
     
     # ESP32 adaptations
     psram_allocator.cpp
-    esp32_netif.cpp
+    esp32_sockutils.cpp  # POSIX socket utilities (getifaddrs, getnameinfo)
     esp32_time.cpp
     esp32_random.cpp
     

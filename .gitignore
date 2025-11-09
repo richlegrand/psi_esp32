@@ -1,6 +1,7 @@
 # ESP-IDF build artifacts
 build/
 sdkconfig.old
+sdkconfig.bak
 *.pyc
 
 # Editor artifacts
@@ -11,6 +12,22 @@ sdkconfig.old
 
 # Generated files
 dependencies.lock
+managed_components/
+managed_components.bak/
+components/libdatachannel/deps/
+
+# Debug artifacts
+*.bin
+coredump*.bin
+
+# Backup files
+*.backup
+
+# Media files (large binary files)
+media_files/
+
+# Test files
+test_*.txt
 
 # Log files
 *.log
