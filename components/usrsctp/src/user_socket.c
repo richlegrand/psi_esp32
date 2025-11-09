@@ -1223,6 +1223,7 @@ socreate(int dom, struct socket **aso, int type, int proto)
 	struct socket *so;
 	int error;
 
+
 	if ((dom != AF_CONN) && (dom != AF_INET) && (dom != AF_INET6)) {
 		return (EINVAL);
 	}
@@ -1314,6 +1315,7 @@ usrsctp_socket(int domain, int type, int protocol,
 	       void *ulp_info)
 {
 	struct socket *so = NULL;
+
 
 	if ((protocol == IPPROTO_SCTP) && (SCTP_BASE_VAR(sctp_pcb_initialized) == 0)) {
 		errno = EPROTONOSUPPORT;

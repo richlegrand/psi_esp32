@@ -24,6 +24,10 @@
 #include <unordered_set>
 #include <vector>
 
+#ifdef ESP32_PORT
+#include <esp_heap_caps.h>
+#endif
+
 // RFC 8831: SCTP MUST support performing Path MTU discovery without relying on ICMP or ICMPv6 as
 // specified in [RFC4821] by using probing messages specified in [RFC4820].
 // See https://www.rfc-editor.org/rfc/rfc8831.html#section-5
@@ -163,7 +167,7 @@ SctpTransport::SctpTransport(shared_ptr<Transport> lower, const Configuration &c
       mPorts(std::move(ports)), mSendQueue(0, message_size_func),
       mBufferedAmountCallback(std::move(bufferedAmountCallback)) {
 	onRecv(std::move(recvCallback));
-
+	
 	PLOG_DEBUG << "Initializing SCTP transport";
 
 	mSock = usrsctp_socket(AF_CONN, SOCK_STREAM, IPPROTO_SCTP, nullptr, nullptr, 0, nullptr);
@@ -478,9 +482,24 @@ void SctpTransport::doRecv() {
 	std::lock_guard lock(mRecvMutex);
 	--mPendingRecvCount;
 	try {
+#ifdef ESP32_PORT
+		// ESP32: Allocate buffer on PSRAM heap to avoid stack overflow (32KB pthread stack)
+		const size_t bufferSize = 16384; // 16KB - sufficient for SCTP receive chunks
+		std::unique_ptr<byte[], decltype(&heap_caps_free)> bufferHolder(
+			static_cast<byte*>(heap_caps_malloc(bufferSize, MALLOC_CAP_SPIRAM)),
+			&heap_caps_free
+		);
+		if (!bufferHolder) {
+			throw std::runtime_error("Failed to allocate SCTP receive buffer from PSRAM");
+		}
+		byte* buffer = bufferHolder.get();
+#else
+		// Other platforms: Use stack buffer
+		const size_t bufferSize = 65536; // 64KB
+		byte stackBuffer[bufferSize];
+		byte* buffer = stackBuffer;
+#endif
 		while (state() != State::Disconnected && state() != State::Failed) {
-			const size_t bufferSize = 65536;
-			byte buffer[bufferSize];
 			socklen_t fromlen = 0;
 			struct sctp_rcvinfo info = {};
 			socklen_t infolen = sizeof(info);

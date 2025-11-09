@@ -55,8 +55,9 @@ target_compile_definitions(${COMPONENT_LIB} PRIVATE
     INET6=1
     # Socket address length fields (ESP32/LWIP has all length fields)
     HAVE_SA_LEN=1
-    HAVE_SIN_LEN=1  
+    HAVE_SIN_LEN=1
     HAVE_SIN6_LEN=1
+    HAVE_SCONN_LEN=1
     # SCTP configuration for embedded
     SCTP_SIMPLE_ALLOCATOR=1
     SCTP_PROCESS_LEVEL_LOCKS=1

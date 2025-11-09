@@ -113,6 +113,11 @@ target_compile_definitions(${COMPONENT_LIB} PUBLIC
     USE_MBEDTLS=1
     ESP32_PORT=1
     CONFIG_MBEDTLS_SSL_PROTO_DTLS=1
+    # Socket address length fields (must match usrsctp component)
+    HAVE_SA_LEN=1
+    HAVE_SIN_LEN=1
+    HAVE_SIN6_LEN=1
+    HAVE_SCONN_LEN=1
 )
 
 # MbedTLS X.509 certificate writing is already enabled in ESP-IDF

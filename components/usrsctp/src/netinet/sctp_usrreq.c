@@ -817,6 +817,7 @@ sctpconn_attach(struct socket *so, int proto SCTP_UNUSED, uint32_t vrf_id)
 	struct inpcb *ip_inp;
 	int error;
 
+
 	inp = (struct sctp_inpcb *)so->so_pcb;
 	if (inp != NULL) {
 		SCTP_LTRACE_ERR_RET(inp, NULL, NULL, SCTP_FROM_SCTP_USRREQ, EINVAL);

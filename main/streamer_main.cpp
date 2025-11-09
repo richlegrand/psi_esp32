@@ -284,6 +284,37 @@ shared_ptr<Client> createPeerConnection(const Configuration &config, string id) 
 
     client->audio = make_shared<ClientTrackData>(audioTrack, audioSrReporter);
 
+    // DEBUG: Re-enabled to test sockaddr_conn struct alignment
+    auto dc = pc->createDataChannel("ping-pong-debug");
+    if (!dc) {
+        ESP_LOGE(TAG, "Failed to create data channel for client: %s", id.c_str());
+    } else {
+        ESP_LOGI(TAG, "Data channel created for debugging for client: %s", id.c_str());
+        client->dataChannel = dc;
+
+        dc->onOpen([id, wdc = make_weak_ptr(dc)]() {
+            ESP_LOGI(TAG, "Data channel opened for client: %s", id.c_str());
+            // Send initial ping to start the ping-pong
+            if (auto dc = wdc.lock()) {
+                dc->send("Ping");
+                ESP_LOGI(TAG, "Sent initial Ping to %s", id.c_str());
+            }
+        });
+
+        dc->onMessage(nullptr, [id, wdc = make_weak_ptr(dc)](string msg) {
+            ESP_LOGI(TAG, "Received message from %s: %s", id.c_str(), msg.c_str());
+            // Send ping response (matching the example's behavior)
+            if (auto dc = wdc.lock()) {
+                dc->send("Ping");
+                ESP_LOGI(TAG, "Sent Ping to %s", id.c_str());
+            }
+        });
+
+        dc->onClosed([id]() {
+            ESP_LOGI(TAG, "Data channel closed for client: %s", id.c_str());
+        });
+    }
+
     // Trigger offer creation and ICE gathering
     pc->setLocalDescription();
 

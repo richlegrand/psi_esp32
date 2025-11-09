@@ -69,7 +69,29 @@ userland_mutex_t atomic_mtx;
  * provide _some_ kind of randomness. This should only be used
  * inside other RNG's, like arc4random(9).
  */
-#if defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
+#if defined(__XTENSA__) || defined(CONFIG_IDF_TARGET_ESP32) || defined(CONFIG_IDF_TARGET_ESP32S2) || defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C3) || defined(CONFIG_IDF_TARGET_ESP32C6) || defined(CONFIG_IDF_TARGET_ESP32H2) || defined(CONFIG_IDF_TARGET_ESP32P4)
+/* ESP32/ESP-IDF implementation using hardware RNG */
+#include <esp_random.h>
+
+void
+init_random(void)
+{
+	return;
+}
+
+void
+read_random(void *buf, size_t size)
+{
+	esp_fill_random(buf, size);
+	return;
+}
+
+void
+finish_random(void)
+{
+	return;
+}
+#elif defined(FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION)
 #include <string.h>
 
 void
