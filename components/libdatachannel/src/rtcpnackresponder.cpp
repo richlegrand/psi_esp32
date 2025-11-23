@@ -46,9 +46,11 @@ void RtcpNackResponder::incoming(message_vector &messages, const message_callbac
 				                              newMissingSeqenceNumbers.end());
 			}
 
-			for (auto sequenceNumber : missingSequenceNumbers)
-				if (auto packet = mStorage->get(sequenceNumber))
+			for (auto sequenceNumber : missingSequenceNumbers) {
+				auto packet = mStorage->get(sequenceNumber);
+				if (packet)
 					send(packet);
+			}
 		}
 	}
 }

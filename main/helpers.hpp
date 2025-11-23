@@ -11,6 +11,7 @@
 #define helpers_hpp
 
 #include "rtc/rtc.hpp"
+#include "esp_log.h"
 
 #include <shared_mutex>
 
@@ -31,6 +32,9 @@ struct Client {
     const std::shared_ptr<rtc::PeerConnection> & peerConnection = _peerConnection;
     Client(std::shared_ptr<rtc::PeerConnection> pc) {
         _peerConnection = pc;
+    }
+    ~Client() {
+        ESP_LOGI("Streamer", "Client destructor called");
     }
     std::optional<std::shared_ptr<ClientTrackData>> video;
     std::optional<std::shared_ptr<ClientTrackData>> audio;

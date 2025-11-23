@@ -16,35 +16,20 @@ namespace rtc {
 
 message_ptr make_message(size_t size, Message::Type type, unsigned int stream,
                          shared_ptr<Reliability> reliability) {
-#ifdef ESP32_PORT
-	auto message = std::allocate_shared<Message, PSRAMAllocator<Message>>(
-	    PSRAMAllocator<Message>(), size, type);
-#else
 	auto message = std::make_shared<Message>(size, type);
-#endif
 	message->stream = stream;
 	message->reliability = reliability;
 	return message;
 }
 
 message_ptr make_message(binary &&data, Message::Type type, unsigned int stream, shared_ptr<Reliability> reliability) {
-#ifdef ESP32_PORT
-	auto message = std::allocate_shared<Message, PSRAMAllocator<Message>>(
-	    PSRAMAllocator<Message>(), std::move(data), type);
-#else
 	auto message = std::make_shared<Message>(std::move(data), type);
-#endif
 	message->stream = stream;
 	message->reliability = reliability;
 	return message;
 }
 message_ptr make_message(binary &&data, shared_ptr<FrameInfo> frameInfo) {
-#ifdef ESP32_PORT
-	auto message = std::allocate_shared<Message, PSRAMAllocator<Message>>(
-	    PSRAMAllocator<Message>(), std::move(data));
-#else
 	auto message = std::make_shared<Message>(std::move(data));
-#endif
 	message->frameInfo = frameInfo;
 	return message;
 }
@@ -53,12 +38,7 @@ message_ptr make_message(size_t size, message_ptr orig) {
 	if (!orig)
 		return nullptr;
 
-#ifdef ESP32_PORT
-	auto message = std::allocate_shared<Message, PSRAMAllocator<Message>>(
-	    PSRAMAllocator<Message>(), size, orig->type);
-#else
 	auto message = std::make_shared<Message>(size, orig->type);
-#endif
 	std::copy(orig->begin(), orig->begin() + std::min(size, orig->size()), message->begin());
 	message->stream = orig->stream;
 	message->reliability = orig->reliability;

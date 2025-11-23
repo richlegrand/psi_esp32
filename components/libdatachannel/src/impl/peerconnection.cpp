@@ -80,7 +80,7 @@ PeerConnection::PeerConnection(Configuration config_) : config(std::move(config_
 }
 
 PeerConnection::~PeerConnection() {
-	PLOG_VERBOSE << "Destroying PeerConnection";
+	PLOG_INFO << "PeerConnection::impl destructor called";
 	mProcessor.join();
 }
 

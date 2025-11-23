@@ -31,3 +31,15 @@ test_*.txt
 
 # Log files
 *.log
+
+# Memory debugging output files
+heap_trace.dat
+gdb_alloc_trace.txt
+main/leak*.txt
+main/leaks.txt
+
+# Backup files
+*.bak
+
+# Temporary sdkconfig
+sdkconfig.new

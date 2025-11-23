@@ -61,6 +61,153 @@ Changed `DefaultMaxSize` from 512 → 64 for ESP32 in `components/libdatachannel
 
 ---
 
+## RESOLVED ISSUE: libstdc++ Memory Inefficiencies for ESP32 (2025-11-16)
+
+### Problem Summary
+Two issues in ESP-IDF's libstdc++ causing significant memory waste:
+1. **shared_ptr uses FreeRTOS mutex** instead of atomic operations (~88 bytes Internal RAM per shared_ptr)
+2. **shared_mutex leaks memory** - destructor doesn't call `pthread_rwlock_destroy()` (~176 bytes per instance)
+
+### Root Cause 1: Atomic Lock Policy Disabled for RISC-V
+
+**Discovery**: GCC's `configure` script explicitly excludes RISC-V from atomic lock policy:
+```c
+#if defined __riscv
+# error "Defaulting to mutex-based locks for ABI compatibility"
+#endif
+```
+
+**Why GCC does this**: ABI compatibility for desktop RISC-V systems. If libstdc++.so (shared library) uses one lock policy and user code uses another, control block sizes mismatch at shared library boundaries. GCC plays it safe.
+
+**Why this doesn't matter for ESP32**:
+- Static linking only (no libstdc++.so)
+- Single embedded application
+- No binary distribution concerns
+- ESP32 hardware fully supports atomic operations
+
+**Impact**: Each `std::shared_ptr` creates a FreeRTOS mutex via `pvPortMalloc()` which always allocates from Internal RAM (hardcoded). This consumes ~88 bytes of precious Internal RAM per shared_ptr instance.
+
+### Root Cause 2: shared_mutex Destructor Bug
+
+**The code** in `libstdc++-v3/include/std/shared_mutex`:
+```cpp
+#ifdef PTHREAD_RWLOCK_INITIALIZER
+// When PTHREAD_RWLOCK_INITIALIZER is defined, destructor is defaulted
+// This means pthread_rwlock_destroy() is NEVER called!
+~__shared_mutex_pthread() = default;  // BUG: leaks 176 bytes
+#else
+~__shared_mutex_pthread() {
+  pthread_rwlock_destroy(&_M_rwlock);  // This path is correct
+}
+#endif
+```
+
+ESP-IDF defines `PTHREAD_RWLOCK_INITIALIZER` (uses lazy initialization), so destructor is defaulted and `pthread_rwlock_destroy()` never runs.
+
+### The Solution: Patched libstdc++
+
+Created custom build of libstdc++ at `/home/rich/pixy3/libstdcpp/` with both fixes:
+
+**Fix 1 - Atomic lock policy** (`gcc/libstdc++-v3/configure` lines 16397-16400):
+```c
+/* ESP-IDF fix: Remove RISC-V exclusion for embedded use */
+/* #if defined __riscv */
+/* # error "Defaulting to mutex-based locks for ABI compatibility" */
+/* #endif */
+```
+
+**Fix 2 - shared_mutex leak** (`gcc/libstdc++-v3/include/std/shared_mutex`):
+```cpp
+// Line 88: Always define destroy wrapper (outside #ifndef block)
+_GLIBCXX_GTHRW(rwlock_destroy)
+
+// Lines 166-171: Explicitly call destroy
+~__shared_mutex_pthread()
+{
+  int __ret __attribute((__unused__)) = __glibcxx_rwlock_destroy(&_M_rwlock);
+  __glibcxx_assert(__ret == 0);
+}
+```
+
+**Verification**:
+```bash
+grep "HAVE_ATOMIC_LOCK_POLICY" /home/rich/pixy3/libstdcpp/install/include/c++/14.2.0/riscv32-esp-elf/bits/c++config.h
+# Shows: #define _GLIBCXX_HAVE_ATOMIC_LOCK_POLICY 1
+```
+
+### Installation
+
+Scripts in `/home/rich/pixy3/libstdcpp/`:
+- `install_to_toolchain.sh` - Install patched library (backs up originals)
+- `restore_toolchain.sh` - Restore original toolchain library
+- `build.sh` - Rebuild from source if needed
+
+```bash
+cd /home/rich/pixy3/libstdcpp
+./install_to_toolchain.sh
+
+cd /home/rich/pixy3/esp32_libdatachannel
+idf.py fullclean && idf.py build
+```
+
+### Expected Memory Savings
+- **Per shared_ptr**: ~88 bytes Internal RAM saved (no mutex allocation)
+- **Per shared_mutex**: ~176 bytes Internal RAM saved (proper cleanup)
+- **RtcpNackResponder**: With 1024 shared_ptr instances, saves ~90 KB Internal RAM
+
+### Key Insight: Header-Only Templates
+
+Important: `std::shared_ptr` is header-only template code. The lock policy is determined by `_GLIBCXX_HAVE_ATOMIC_LOCK_POLICY` macro at **compile time**, not by what's in libstdc++.a. This is why we must install the patched `c++config.h` header, not just the library.
+
+---
+
+## CURRENT ISSUE: Callback Memory Leak Investigation (2025-11-11)
+
+### Problem
+8 KB Internal RAM leak per WebRTC connection cycle. Memory baseline: 400 KB → 392 KB after connect/disconnect/cleanup. Heap trace shows 226 leaked allocations, mostly 84-byte blocks (std::function control blocks).
+
+### Investigation Results
+
+**Heap trace setup**:
+- 2000-record buffer allocated in PSRAM to save Internal RAM
+- Trace started before connection, stopped after State::Closed
+- Captures: 226 allocations, 22.4 KB total
+
+**Observed state transitions**:
+```
+State: Connecting
+State: Connected
+State: Disconnected  (browser closes)
+State: Closed        (callbacks supposedly reset here)
+[~2 seconds async cleanup]
+Memory: 353 KB → 392 KB (still 8 KB below baseline)
+```
+
+**Code locations examined**:
+- `main/streamer_main.cpp:244-260` - onStateChange callback that erases client
+- `components/libdatachannel/src/impl/peerconnection.cpp:377-420` - closeTransports() cleanup
+- `components/libdatachannel/src/impl/peerconnection.cpp:1372-1382` - resetCallbacks() implementation
+
+### Current Theory: Self-Referential Destruction
+
+The onStateChange callback fires when State::Closed is reached. Inside that callback, `clients.erase(id)` attempts to destroy the PeerConnection. But the callback is still executing on the stack, so it can't fully destroy itself.
+
+**Suspected sequence**:
+1. State::Closed callback executes
+2. Callback calls `clients.erase(id)` immediately
+3. This tries to destroy PeerConnection while callback is still running
+4. Callback lambda objects can't be freed until function returns
+5. Result: std::function control blocks and captured data leak
+
+**Current fix attempt**: Wrapped `clients.erase(id)` in `MainThread->dispatch()` to defer destruction until after callback completes. Testing in progress.
+
+**Alternative hypotheses if defer doesn't work**:
+- Some other component holding PeerConnection references
+- Circular references in track/datachannel callbacks
+- Thread pool tasks holding shared_ptr copies longer than expected
+
+---
+
 ## PREVIOUS ISSUE: ESP-Hosted vs libdatachannel Constructor Interference (RESOLVED)
 
 ### Problem Summary
@@ -157,4 +304,4 @@ idf.py menuconfig     # Configure
 - `components/libsrtp/CMakeLists.txt` - SRTP component
 
 ---
-*Last updated: 2025-11-08 - Fixed DMA memory leak by reducing RtcpNackResponder buffer size*
+*Last updated: 2025-11-16 - Added libstdc++ memory fixes (atomic lock policy, shared_mutex leak)*

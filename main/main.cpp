@@ -16,9 +16,16 @@
 // WebRTC streaming functionality
 #include "rtc/rtc.hpp"
 #include "streamer.hpp"
-
-// ESP32 PSRAM configuration
 #include "esp32_psram_init.h"
+
+// C++ STL headers for testing
+#include <vector>
+#include <map>
+#include <string>
+#include <memory>
+#include <functional>
+#include <shared_mutex>
+#include "esp_heap_caps.h"
 
 static const char *TAG = "h264_streamer";
 
@@ -124,12 +131,11 @@ static void wifi_init_sta(void) {
 static void littlefs_init(void) {
     ESP_LOGI(TAG, "Initializing LittleFS");
 
-    esp_vfs_littlefs_conf_t conf = {
-        .base_path = "/littlefs",
-        .partition_label = "storage",
-        .format_if_mount_failed = false,  // Don't format - we have media files
-        .dont_mount = false,
-    };
+    esp_vfs_littlefs_conf_t conf = {};
+    conf.base_path = "/littlefs";
+    conf.partition_label = "storage";
+    conf.format_if_mount_failed = false;  // Don't format - we have media files
+    conf.dont_mount = false;
 
     esp_err_t ret = esp_vfs_littlefs_register(&conf);
     if (ret != ESP_OK) {
@@ -152,11 +158,9 @@ static void littlefs_init(void) {
     }
 }
 
+
 extern "C" void app_main(void) {
     ESP_LOGI(TAG, "Starting H.264 WebRTC streamer...");
-
-    // Configure pthread to use PSRAM for thread stacks (critical for usrsctp)
-    esp32_configure_pthread_psram();
 
     // Initialize NVS (required for WiFi)
     esp_err_t ret = nvs_flash_init();
@@ -166,12 +170,21 @@ extern "C" void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+    // Enable PSRAM as default malloc target (before any major allocations)
+    enable_psram_malloc();
+
     // Initialize LittleFS for H.264 media files
     littlefs_init();
+
+    ESP_LOGI(TAG, "After LittleFS - Internal RAM: %d KB free",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
     // Initialize WiFi with ESP-Hosted
     ESP_LOGI(TAG, "Initializing WiFi with ESP-Hosted...");
     wifi_init_sta();
+
+    ESP_LOGI(TAG, "After WiFi init - Internal RAM: %d KB free",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
     // Wait for IPv4 connection first
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
@@ -206,10 +219,19 @@ extern "C" void app_main(void) {
     }
 
     // Initialize libdatachannel for WebRTC
+    ESP_LOGI(TAG, "Before InitLogger - Internal RAM: %d KB free",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+
     rtc::InitLogger(rtc::LogLevel::Info);
+
+    ESP_LOGI(TAG, "After InitLogger - Internal RAM: %d KB free",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
     // ESP32: Start networking threads now that FreeRTOS scheduler is running
     rtc::StartNetworking();
+
+    ESP_LOGI(TAG, "After StartNetworking - Internal RAM: %d KB free",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
     // Start the H.264 WebRTC streamer
     ESP_LOGI(TAG, "Starting WebRTC streamer...");

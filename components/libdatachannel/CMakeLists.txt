@@ -20,7 +20,7 @@ set(SOURCES
     src/impl/transport.cpp
     src/impl/utils.cpp
     src/impl/logcounter.cpp
-    
+
     # WebSocket support
     src/impl/websocket.cpp
     src/impl/websocketserver.cpp
@@ -35,7 +35,7 @@ set(SOURCES
     src/impl/sha.cpp
     src/websocket.cpp
     src/websocketserver.cpp
-    
+
     # Media support
     src/rtcpsrreporter.cpp
     src/rtcpreceivingsession.cpp
@@ -56,13 +56,13 @@ set(SOURCES
     src/plihandler.cpp
     src/rembhandler.cpp
     src/pacinghandler.cpp
-    
+
     # ESP32 adaptations
     psram_allocator.cpp
     esp32_sockutils.cpp  # POSIX socket utilities (getifaddrs, getnameinfo)
     esp32_time.cpp
     esp32_random.cpp
-    
+
     # Public API
     src/candidate.cpp
     src/channel.cpp
@@ -86,7 +86,7 @@ idf_component_register(
         src/impl
         include/rtc
         deps/libsrtp/include
-    REQUIRES 
+    REQUIRES
         pthread
         mbedtls
         lwip
@@ -95,6 +95,7 @@ idf_component_register(
         esp_timer
         esp_wifi
         libsrtp
+        esp_system
     PRIV_REQUIRES
         plog
         libjuice  
@@ -127,14 +128,17 @@ target_compile_options(${COMPONENT_LIB} PRIVATE
     -UMBEDTLS_DEPRECATED_REMOVED
 )
 
-# Force include PSRAM allocation redirects for this component only
-target_compile_options(${COMPONENT_LIB} PRIVATE
-    -include esp32_malloc_redirect.h
-)
-
 # ESP32-specific compiler flags
 target_compile_options(${COMPONENT_LIB} PRIVATE
     -Wno-unused-parameter
     -Wno-unused-variable
     -Wno-missing-field-initializers
+)
+
+# Use linker --wrap to override malloc/free/calloc/realloc
+target_link_options(${COMPONENT_TARGET} INTERFACE
+    "LINKER:--wrap=malloc"
+    "LINKER:--wrap=free"
+    "LINKER:--wrap=calloc"
+    "LINKER:--wrap=realloc"
 )

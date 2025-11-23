@@ -21,6 +21,7 @@
 #ifdef ESP_PLATFORM
 #include "impl/threadpool.hpp"
 #include "impl/pollservice.hpp"
+#include "esp32_psram_init.h"
 #include <thread>
 #endif
 
@@ -102,6 +103,10 @@ void SetSctpSettings(SctpSettings s) { impl::Init::Instance().setSctpSettings(st
 
 #ifdef ESP_PLATFORM
 void StartNetworking() {
+	// ESP32: Configure pthread to use PSRAM BEFORE creating any threads
+	// This must happen before ThreadPool::spawn() creates worker threads
+	esp32_configure_pthread_psram();
+
 	// ESP32: Start threads that were deferred during initialization
 	int concurrency = std::thread::hardware_concurrency();
 	int count = std::max(concurrency, 2); // MIN_THREADPOOL_SIZE

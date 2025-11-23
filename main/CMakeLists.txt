@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.cpp" "h264fileparser.cpp" "fileparser.cpp" "opusfileparser.cpp" "stream.cpp" "dispatchqueue.cpp" "helpers.cpp" "streamer_main.cpp"
+    SRCS "main.cpp" "h264fileparser.cpp" "fileparser.cpp" "opusfileparser.cpp" "stream.cpp" "dispatchqueue.cpp" "helpers.cpp" "streamer_main.cpp" "memory_tracker.cpp" "alloc_trace.c"
     INCLUDE_DIRS "."
     REQUIRES
         libdatachannel

@@ -1,0 +1,8 @@
+# Ignore GCC source trees and build artifacts (too large for repo)
+gcc/
+crosstool-NG/
+build/
+
+# Object files and libraries (generated)
+*.o
+*.lo
