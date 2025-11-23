@@ -14,7 +14,6 @@ sdkconfig.bak
 dependencies.lock
 managed_components/
 managed_components.bak/
-components/libdatachannel/deps/
 
 # Debug artifacts
 *.bin
