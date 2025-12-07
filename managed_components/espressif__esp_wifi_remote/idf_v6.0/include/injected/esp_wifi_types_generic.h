@@ -533,8 +533,10 @@ typedef struct {
     bool ftm_responder;                       /**< Enable FTM Responder mode */
     wifi_pmf_config_t pmf_cfg;                /**< Configuration for Protected Management Frame */
     wifi_sae_pwe_method_t sae_pwe_h2e;        /**< Configuration for SAE PWE derivation method */
-    uint8_t transition_disable;               /**< Whether to enable transition disable feature */
-    uint8_t sae_ext;                          /**< Enable SAE EXT feature. SOC_GCMP_SUPPORT is required for this feature. */
+    uint8_t transition_disable: 1;            /**< Whether to enable transition disable feature */
+    uint8_t sae_ext: 1;                       /**< Enable SAE EXT feature. SOC_GCMP_SUPPORT is required for this feature. */
+    uint8_t wpa3_compatible_mode: 1;          /**< Enable WPA3 compatible authmode feature. Note: Enabling this will override the AP configuration's authmode and pairwise_cipher. The AP will operate as a WPA2 access point for all stations except for those that support WPA3 compatible mode. Only WPA3 compatibility mode stations will be able to use WPA3-SAE */
+    uint8_t reserved: 5;                      /**< Reserved for future feature set */
     wifi_bss_max_idle_config_t bss_max_idle_cfg;  /**< Configuration for bss max idle, effective if CONFIG_WIFI_BSS_MAX_IDLE_SUPPORT is enabled */
     uint16_t gtk_rekey_interval;              /**< GTK rekeying interval in seconds. If set to 0, GTK rekeying is disabled. Range: 60 ~ 65535 including 0. */
 } wifi_ap_config_t;
@@ -561,7 +563,8 @@ typedef struct {
     uint32_t ft_enabled: 1;                   /**< Whether FT is enabled for the connection */
     uint32_t owe_enabled: 1;                  /**< Whether OWE is enabled for the connection */
     uint32_t transition_disable: 1;           /**< Whether to enable transition disable feature */
-    uint32_t reserved1: 26;                   /**< Reserved for future feature set */
+    uint32_t disable_wpa3_compatible_mode: 1; /**< Whether to disable wpa3 compatible authmode feature. Disabling this prevents connecting to WPA3-Personal RSN override (compatibility mode) APs; connection falls back to WPA2 only. */
+    uint32_t reserved1: 25;                   /**< Reserved for future feature set */
     wifi_sae_pwe_method_t sae_pwe_h2e;        /**< Configuration for SAE PWE derivation method */
     wifi_sae_pk_mode_t sae_pk_mode;           /**< Configuration for SAE-PK (Public Key) Authentication method */
     uint8_t failure_retry_cnt;                /**< Number of connection retries station will do before moving to next AP. scan_method should be set as WIFI_ALL_CHANNEL_SCAN to use this config.
@@ -578,7 +581,7 @@ typedef struct {
     uint32_t vht_mu_beamformee_disabled: 1;                       /**< Whether to disable support for operation as an VHT MU beamformee. */
     uint32_t vht_mcs8_enabled: 1;                                 /**< Whether to support VHT-MCS8. The default value is 0. */
     uint32_t reserved2: 19;                                       /**< Reserved for future feature set */
-    uint8_t sae_h2e_identifier[SAE_H2E_IDENTIFIER_LEN];/**< Password identifier for H2E. this needs to be null terminated string */
+    uint8_t sae_h2e_identifier[SAE_H2E_IDENTIFIER_LEN];           /**< Password identifier for H2E. Strings null-terminated (length < SAE_H2E_IDENTIFIER_LEN) or non-null terminated (length = SAE_H2E_IDENTIFIER_LEN) are accepted. Non-null terminated string with 0xFF for full length of SAE_H2E_IDENTIFIER_LEN is not considered a valid identifier */
 } wifi_sta_config_t;
 
 /**
@@ -589,7 +592,7 @@ typedef struct {
     uint8_t master_pref;   /**< Device's preference value to serve as NAN Master */
     uint8_t scan_time;     /**< Scan time in seconds while searching for a NAN cluster */
     uint16_t warm_up_sec;  /**< Warm up time before assuming NAN Anchor Master role */
-} wifi_nan_config_t;
+} wifi_nan_sync_config_t;
 
 /**
   * @brief Configuration data for device's AP or STA or NAN.
@@ -601,7 +604,7 @@ typedef struct {
 typedef union {
     wifi_ap_config_t  ap;  /**< Configuration of AP */
     wifi_sta_config_t sta; /**< Configuration of STA */
-    wifi_nan_config_t nan; /**< Configuration of NAN */
+    wifi_nan_sync_config_t nan; /**< Configuration of NAN */
 } wifi_config_t;
 
 /**
@@ -795,6 +798,7 @@ typedef struct {
     bool no_ack;                /**< Indicates no ack required */
     wifi_action_rx_cb_t rx_cb;  /**< Rx Callback to receive action frames */
     uint8_t op_id;              /**< Unique Identifier for operation provided by wifi driver */
+    uint8_t bssid[6];           /**< BSSID (A3) address. If all zeroes, broadcast address will be used */
     uint32_t data_len;          /**< Length of the appended Data */
     uint8_t data[0];            /**< Appended Data payload */
 } wifi_action_tx_req_t;
@@ -827,9 +831,14 @@ typedef struct {
     uint8_t channel;                   /**< Channel on which to perform ROC Operation */
     wifi_second_chan_t sec_channel;    /**< Secondary channel */
     uint32_t wait_time_ms;             /**< Duration to wait for on target channel */
-    wifi_action_rx_cb_t rx_cb;         /**< Rx Callback to receive any response */
+    wifi_action_rx_cb_t rx_cb;         /**< Rx Callback to receive action mgmt frames */
     uint8_t op_id;                     /**< ID of this specific ROC operation provided by wifi driver */
     wifi_action_roc_done_cb_t done_cb; /**< Callback to function that will be called upon ROC done. If assigned, WIFI_EVENT_ROC_DONE event will not be posted */
+    bool allow_broadcast;              /**< If set to true, broadcast/multicast action frames from any network (Address3/BSSID=ANY)
+                                            will be received in the ROC Rx callback, enabling peer discovery.
+                                            If false (default), broadcast/multicast action frames from other networks
+                                            will be filtered out in hardware and not passed to the Rx callback, reducing CPU usage.
+                                            Frames whose Address3/BSSID is already broadcast are always delivered. */
 } wifi_roc_req_t;
 
 /**
@@ -843,7 +852,7 @@ typedef struct {
     uint16_t burst_period;      /**< Requested period between FTM bursts in 100's of milliseconds (allowed values 0(No pref) - 100) */
 } wifi_ftm_initiator_cfg_t;
 
-#define ESP_WIFI_NAN_MAX_SVC_SUPPORTED  2      /**< Maximum number of NAN services supported */
+#define ESP_WIFI_NAN_MAX_SVC_SUPPORTED  2      /**< Maximum number of NAN or NAN-USD services supported */
 #define ESP_WIFI_NAN_DATAPATH_MAX_PEERS 2      /**< Maximum number of NAN datapath peers supported */
 
 #define ESP_WIFI_NDP_ROLE_INITIATOR     1      /**< Initiator role for NAN Data Path */
@@ -875,7 +884,7 @@ typedef enum {
   */
 typedef struct {
     uint8_t wfa_oui[WIFI_OUI_LEN];  /**< WFA OUI - 0x50, 0x6F, 0x9A */
-    wifi_nan_svc_proto_t proto;     /**< WFA defined protocol types */
+    uint8_t proto;                  /**< WFA defined protocol of type wifi_nan_svc_proto_t */
     uint8_t payload[0];             /**< Service Info payload */
 } wifi_nan_wfa_ssi_t;
 
@@ -891,6 +900,19 @@ typedef enum {
 } wifi_nan_service_type_t;
 
 /**
+  * @brief USD specific configuration parameters
+  *
+  */
+typedef struct {
+    uint8_t usd_default_channel;                    /**< If not specified, default channel 6 is used */
+    wifi_scan_channel_bitmap_t usd_chan_bitmap;     /**< Indicates publish channel list used in USD */
+    uint8_t n_min;                                  /**< Indicates minimum value of dwell period N used in the USD (Nmin) */
+    uint8_t n_max;                                  /**< Indicates maximum value of dwell period N used in the USD (Nmax) */
+    uint8_t m_min;                                  /**< Indicates minimum value of dwell period M used in the USD (Mmin) */
+    uint8_t m_max;                                  /**< Indicates maximum value of dwell period M used in the USD (Mmax)*/
+} wifi_nan_usd_config_t;
+
+/**
   * @brief NAN Publish service configuration parameters
   *
   */
@@ -903,9 +925,13 @@ typedef struct {
     uint8_t fsd_reqd: 1;                            /**< Further Service Discovery(FSD) required */
     uint8_t fsd_gas: 1;                             /**< 0 - Follow-up used for FSD, 1 - GAS used for FSD */
     uint8_t ndp_resp_needed: 1;                     /**< 0 - Auto-Accept NDP Requests, 1 - Require explicit response with esp_wifi_nan_datapath_resp */
-    uint8_t reserved: 3;                            /**< Reserved */
+    uint8_t usd_discovery_flag: 1;                  /**< 0 - NAN Synchronization for Discovery, 1 - USD for Discovery. 'NAN Discovery flag' from specification */
+    uint8_t reserved: 2;                            /**< Reserved */
     uint16_t ssi_len;                               /**< Length of service specific info, maximum allowed length - ESP_WIFI_MAX_SVC_SSI_LEN */
     uint8_t *ssi;                                   /**< Service Specific Info of type wifi_nan_wfa_ssi_t for WFA defined protocols, otherwise proprietary and defined by Applications */
+    unsigned int ttl;                               /**< Run publish function for a given time interval in seconds. If ttl=0 and usd_discovery_flag is enabled,
+                                                         only one Publish message is transmitted */
+    wifi_nan_usd_config_t usd_publish_config;       /**< USD configuration parameters. Relevant only when 'usd_discovery_flag' is set. */
 } wifi_nan_publish_cfg_t;
 
 /**
@@ -920,9 +946,13 @@ typedef struct {
     uint8_t datapath_reqd: 1;                       /**< NAN Datapath required for the service */
     uint8_t fsd_reqd: 1;                            /**< Further Service Discovery(FSD) required */
     uint8_t fsd_gas: 1;                             /**< 0 - Follow-up used for FSD, 1 - GAS used for FSD */
-    uint8_t reserved: 4;                            /**< Reserved */
+    uint8_t usd_discovery_flag: 1;                  /**< 0 - NAN Synchronization for Discovery, 1 - USD for Discovery. 'NAN Discovery flag' from specification */
+    uint8_t reserved: 3;                            /**< Reserved */
     uint16_t ssi_len;                               /**< Length of service specific info, maximum allowed length - ESP_WIFI_MAX_SVC_SSI_LEN */
     uint8_t *ssi;                                   /**< Service Specific Info of type wifi_nan_wfa_ssi_t for WFA defined protocols, otherwise proprietary and defined by Applications */
+    unsigned int ttl;                               /**< Run subscribe function for a given time interval in seconds. If ttl=0 and usd_discovery_flag is enabled,
+                                                         the subscriber listens until the first service match is reported. */
+    wifi_nan_usd_config_t usd_subscribe_config;     /**< USD configuration parameters. Relevant only when 'usd_discovery_flag' is set. */
 } wifi_nan_subscribe_cfg_t;
 
 /**
@@ -1095,8 +1125,8 @@ typedef enum {
     WIFI_EVENT_BTWT_SETUP,              /**< bTWT setup */
     WIFI_EVENT_BTWT_TEARDOWN,           /**< bTWT teardown*/
 
-    WIFI_EVENT_NAN_STARTED,              /**< NAN Discovery has started */
-    WIFI_EVENT_NAN_STOPPED,              /**< NAN Discovery has stopped */
+    WIFI_EVENT_NAN_SYNC_STARTED,         /**< NAN Synchronization Discovery has started */
+    WIFI_EVENT_NAN_SYNC_STOPPED,         /**< NAN Synchronization Discovery has stopped */
     WIFI_EVENT_NAN_SVC_MATCH,            /**< NAN Service Discovery match found */
     WIFI_EVENT_NAN_REPLIED,              /**< Replied to a NAN peer with Service Discovery match */
     WIFI_EVENT_NAN_RECEIVE,              /**< Received a Follow-up message */
@@ -1363,7 +1393,7 @@ typedef struct {
     uint32_t reserved_2;        /**< Reserved */
     uint8_t ssi_version;        /**< Indicates version of SSI in Publish instance, 0 if not available */
     uint16_t ssi_len;           /**< Length of service specific info */
-    uint8_t *ssi;               /**< Service specific info of Publisher */
+    uint8_t ssi[];              /**< Service specific info of Publisher */
 } wifi_event_nan_svc_match_t;
 
 /**
@@ -1376,7 +1406,7 @@ typedef struct {
     uint32_t reserved_1;        /**< Reserved */
     uint32_t reserved_2;        /**< Reserved */
     uint16_t ssi_len;           /**< Length of service specific info */
-    uint8_t *ssi;               /**< Service specific info of Subscriber */
+    uint8_t ssi[];              /**< Service specific info of Subscriber */
 } wifi_event_nan_replied_t;
 
 /**
@@ -1389,7 +1419,7 @@ typedef struct {
     uint32_t reserved_1;                             /**< Reserved */
     uint32_t reserved_2;                             /**< Reserved */
     uint16_t ssi_len;                                /**< Length of service specific info */
-    uint8_t *ssi;                                    /**< Service specific info from Follow-up */
+    uint8_t ssi[];                                   /**< Service specific info from Follow-up */
 } wifi_event_nan_receive_t;
 
 /**
@@ -1403,7 +1433,7 @@ typedef struct {
     uint32_t reserved_1;                        /**< Reserved */
     uint32_t reserved_2;                        /**< Reserved */
     uint16_t ssi_len;                           /**< Length of service specific info */
-    uint8_t *ssi;                               /**< Service specific info from NDP/NDPE Attribute */
+    uint8_t ssi[];                              /**< Service specific info from NDP/NDPE Attribute */
 } wifi_event_ndp_indication_t;
 
 /**
@@ -1418,7 +1448,7 @@ typedef struct {
     uint32_t reserved_1;                        /**< Reserved */
     uint32_t reserved_2;                        /**< Reserved */
     uint16_t ssi_len;                           /**< Length of Service Specific Info */
-    uint8_t *ssi;                               /**< Service specific info from NDP/NDPE Attribute */
+    uint8_t ssi[];                              /**< Service specific info from NDP/NDPE Attribute */
 } wifi_event_ndp_confirm_t;
 
 /**

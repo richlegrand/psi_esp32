@@ -104,13 +104,6 @@ static void transport_drv_init(void)
 	bus_handle = bus_init_internal();
 	ESP_LOGD(TAG, "Bus handle: %p", bus_handle);
 	assert(bus_handle);
-#if H_NETWORK_SPLIT_ENABLED
-	ESP_LOGI(TAG, "Network split enabled. Port ranges- Host:TCP(%d-%d), UDP(%d-%d), Slave:TCP(%d-%d), UDP(%d-%d)",
-		H_HOST_TCP_LOCAL_PORT_RANGE_START, H_HOST_TCP_LOCAL_PORT_RANGE_END,
-		H_HOST_UDP_LOCAL_PORT_RANGE_START, H_HOST_UDP_LOCAL_PORT_RANGE_END,
-		H_SLAVE_TCP_REMOTE_PORT_RANGE_START, H_SLAVE_TCP_REMOTE_PORT_RANGE_END,
-		H_SLAVE_UDP_REMOTE_PORT_RANGE_START, H_SLAVE_UDP_REMOTE_PORT_RANGE_END);
-#endif
 	hci_drv_init();
 }
 
@@ -175,7 +168,10 @@ esp_err_t transport_drv_reconfigure(void)
 	/* This would come into picture, only if the host has
 	 * reset pin connected to slave's 'EN' or 'RST' GPIO */
 	if (!is_transport_tx_ready()) {
-		ensure_slave_bus_ready(bus_handle);
+		if (ESP_OK != ensure_slave_bus_ready(bus_handle)) {
+			ESP_LOGE(TAG, "ensure_slave_bus_ready failed");
+			return ESP_FAIL;
+		}
 		transport_state = TRANSPORT_RX_ACTIVE;
 		ESP_LOGI(TAG, "Waiting for esp_hosted slave to be ready");
 		while (!is_transport_tx_ready()) {
@@ -183,7 +179,10 @@ esp_err_t transport_drv_reconfigure(void)
 				retry_slave_connection++;
 				if (retry_slave_connection%50==0) {
 					ESP_LOGI(TAG, "Not able to connect with ESP-Hosted slave device");
-					ensure_slave_bus_ready(bus_handle);
+					if (ESP_OK != ensure_slave_bus_ready(bus_handle)) {
+						ESP_LOGE(TAG, "ensure_slave_bus_ready failed");
+						return ESP_FAIL;
+					}
 				}
 			} else {
 				ESP_LOGW(TAG, "Failed to get ESP_Hosted slave transport up");
@@ -353,7 +352,7 @@ transport_channel_t *transport_drv_add_channel(void *api_chan,
 	assert(channel->memp);
 #endif
 
-	ESP_LOGI(TAG, "Add ESP-Hosted channel IF[%u]: S[%u] Tx[%p] Rx[%p]",
+	ESP_LOGD(TAG, "Add ESP-Hosted channel IF[%u]: S[%u] Tx[%p] Rx[%p]",
 			if_type, secure, *tx, rx);
 
 	return channel;
@@ -563,18 +562,17 @@ static int compare_fw_version(uint32_t slave_version)
 		return 0;
 	} else if (host_version > slave_version) {
 	    // host version > slave version
-		ESP_LOGW(TAG, "=== ESP-Hosted Version Warning ===");
-		printf("Version on Host is NEWER than version on co-processor\n");
-		printf("RPC requests sent by host may encounter timeout errors\n");
-		printf("or may not be supported by co-processor\n");
-		ESP_LOGW(TAG, "=== ESP-Hosted Version Warning ===");
+#ifndef CONFIG_ESP_HOSTED_FW_VERSION_MISMATCH_WARNING_SUPPRESS
+		ESP_LOGW(TAG, "Version mismatch: Host [%u.%u.%u] > Co-proc [%u.%u.%u] ==> Upgrade co-proc to avoid RPC timeouts",
+			ESP_HOSTED_VERSION_PRINTF_ARGS(host_version), ESP_HOSTED_VERSION_PRINTF_ARGS(slave_version));
+#endif
 		return -1;
 	} else {
 	    // host version < slave version
-		ESP_LOGW(TAG, "=== ESP-Hosted Version Warning ===");
-		printf("Version on Host is OLDER than version on co-processor\n");
-		printf("Host may not be compatible with co-processor\n");
-		ESP_LOGW(TAG, "=== ESP-Hosted Version Warning ===");
+#ifndef CONFIG_ESP_HOSTED_FW_VERSION_MISMATCH_WARNING_SUPPRESS
+		ESP_LOGW(TAG, "Version mismatch: Host [%u.%u.%u] < Co-proc [%u.%u.%u] ==> Upgrade host to avoid compatibility issues",
+			ESP_HOSTED_VERSION_PRINTF_ARGS(host_version), ESP_HOSTED_VERSION_PRINTF_ARGS(slave_version));
+#endif
 		return 1;
 	}
 }

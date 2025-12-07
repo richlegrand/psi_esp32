@@ -61,6 +61,7 @@ typedef struct WifiProtocols WifiProtocols;
 typedef struct WifiBandwidths WifiBandwidths;
 typedef struct WifiItwtSetupConfig WifiItwtSetupConfig;
 typedef struct WifiTwtConfig WifiTwtConfig;
+typedef struct EspAppDesc EspAppDesc;
 typedef struct ConnectedSTAList ConnectedSTAList;
 typedef struct EapFastConfig EapFastConfig;
 typedef struct RpcReqGetMacAddress RpcReqGetMacAddress;
@@ -81,6 +82,10 @@ typedef struct RpcReqOTAWrite RpcReqOTAWrite;
 typedef struct RpcRespOTAWrite RpcRespOTAWrite;
 typedef struct RpcReqOTAEnd RpcReqOTAEnd;
 typedef struct RpcRespOTAEnd RpcRespOTAEnd;
+typedef struct RpcReqOTAActivate RpcReqOTAActivate;
+typedef struct RpcRespOTAActivate RpcRespOTAActivate;
+typedef struct RpcReqAppGetDesc RpcReqAppGetDesc;
+typedef struct RpcRespAppGetDesc RpcRespAppGetDesc;
 typedef struct RpcReqWifiSetMaxTxPower RpcReqWifiSetMaxTxPower;
 typedef struct RpcRespWifiSetMaxTxPower RpcRespWifiSetMaxTxPower;
 typedef struct RpcReqWifiGetMaxTxPower RpcReqWifiGetMaxTxPower;
@@ -407,6 +412,20 @@ typedef enum _RpcId {
    *0x109
    */
   RPC_ID__Req_SuppDppStopListen = 265,
+  /*
+   *Req_SetSoftAPVendorSpecificIE     = 266; //0x10a
+   *Req_StartSoftAP                   = 267; //0x10b
+   *Req_GetSoftAPConnectedSTAList     = 268; //0x10c
+   *Req_StopSoftAP                    = 269; //0x10d
+   */
+  /*
+   *0x10a
+   */
+  RPC_ID__Req_OTAActivate = 266,
+  /*
+   *0x10b
+   */
+  RPC_ID__Req_AppGetDesc = 267,
   /*
    *0x10e
    */
@@ -910,6 +929,14 @@ typedef enum _RpcId {
   RPC_ID__Resp_SuppDppBootstrapGen = 519,
   RPC_ID__Resp_SuppDppStartListen = 520,
   RPC_ID__Resp_SuppDppStopListen = 521,
+  /*
+   *Resp_SetSoftAPVendorSpecificIE    = 522;
+   *Resp_StartSoftAP                  = 523;
+   *Resp_GetSoftAPConnectedSTAList    = 524;
+   *Resp_StopSoftAP                   = 525;
+   */
+  RPC_ID__Resp_OTAActivate = 522,
+  RPC_ID__Resp_AppGetDesc = 523,
   RPC_ID__Resp_WifiSetPs = 526,
   RPC_ID__Resp_WifiGetPs = 527,
   RPC_ID__Resp_OTABegin = 528,
@@ -2472,6 +2499,71 @@ struct  WifiTwtConfig
     , 0, 0 }
 
 
+struct  EspAppDesc
+{
+  ProtobufCMessage base;
+  /*
+   *!< Magic word ESP_APP_DESC_MAGIC_WORD 
+   */
+  uint32_t magic_word;
+  /*
+   *!< Secure version 
+   */
+  uint32_t secure_version;
+  /*
+   *!< reserv1 
+   */
+  ProtobufCBinaryData reserv1;
+  /*
+   *!< Application version 
+   */
+  ProtobufCBinaryData version;
+  /*
+   *!< Project name 
+   */
+  ProtobufCBinaryData project_name;
+  /*
+   *!< Compile time 
+   */
+  ProtobufCBinaryData time;
+  /*
+   *!< Compile date
+   */
+  ProtobufCBinaryData date;
+  /*
+   *!< Version IDF 
+   */
+  ProtobufCBinaryData idf_ver;
+  /*
+   *!< sha256 of elf file 
+   */
+  ProtobufCBinaryData app_elf_sha256;
+  /*
+   *!< Minimal eFuse block revision supported by image, in format: major * 100 + minor 
+   */
+  uint32_t min_efuse_blk_rev_full;
+  /*
+   *!< Maximal eFuse block revision supported by image, in format: major * 100 + minor 
+   */
+  uint32_t max_efuse_blk_rev_full;
+  /*
+   *!< MMU page size in log base 2 format 
+   */
+  uint32_t mmu_page_size;
+  /*
+   *!< reserv3 
+   */
+  ProtobufCBinaryData reserv3;
+  /*
+   *!< reserv2 
+   */
+  ProtobufCBinaryData reserv2;
+};
+#define ESP_APP_DESC__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&esp_app_desc__descriptor) \
+    , 0, 0, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, {0,NULL}, 0, 0, 0, {0,NULL}, {0,NULL} }
+
+
 struct  ConnectedSTAList
 {
   ProtobufCMessage base;
@@ -2685,6 +2777,45 @@ struct  RpcRespOTAEnd
 #define RPC__RESP__OTAEND__INIT \
  { PROTOBUF_C_MESSAGE_INIT (&rpc__resp__otaend__descriptor) \
     , 0 }
+
+
+struct  RpcReqOTAActivate
+{
+  ProtobufCMessage base;
+};
+#define RPC__REQ__OTAACTIVATE__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&rpc__req__otaactivate__descriptor) \
+     }
+
+
+struct  RpcRespOTAActivate
+{
+  ProtobufCMessage base;
+  int32_t resp;
+};
+#define RPC__RESP__OTAACTIVATE__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&rpc__resp__otaactivate__descriptor) \
+    , 0 }
+
+
+struct  RpcReqAppGetDesc
+{
+  ProtobufCMessage base;
+};
+#define RPC__REQ__APP_GET_DESC__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&rpc__req__app_get_desc__descriptor) \
+     }
+
+
+struct  RpcRespAppGetDesc
+{
+  ProtobufCMessage base;
+  int32_t resp;
+  EspAppDesc *app_desc;
+};
+#define RPC__RESP__APP_GET_DESC__INIT \
+ { PROTOBUF_C_MESSAGE_INIT (&rpc__resp__app_get_desc__descriptor) \
+    , 0, NULL }
 
 
 struct  RpcReqWifiSetMaxTxPower
@@ -4793,6 +4924,8 @@ typedef enum {
   RPC__PAYLOAD_REQ_SUPP_DPP_BOOTSTRAP_GEN = 263,
   RPC__PAYLOAD_REQ_SUPP_DPP_START_LISTEN = 264,
   RPC__PAYLOAD_REQ_SUPP_DPP_STOP_LISTEN = 265,
+  RPC__PAYLOAD_REQ_OTA_ACTIVATE = 266,
+  RPC__PAYLOAD_REQ_APP_GET_DESC = 267,
   RPC__PAYLOAD_REQ_WIFI_SET_PS = 270,
   RPC__PAYLOAD_REQ_WIFI_GET_PS = 271,
   RPC__PAYLOAD_REQ_OTA_BEGIN = 272,
@@ -4891,6 +5024,8 @@ typedef enum {
   RPC__PAYLOAD_RESP_SUPP_DPP_BOOTSTRAP_GEN = 519,
   RPC__PAYLOAD_RESP_SUPP_DPP_START_LISTEN = 520,
   RPC__PAYLOAD_RESP_SUPP_DPP_STOP_LISTEN = 521,
+  RPC__PAYLOAD_RESP_OTA_ACTIVATE = 522,
+  RPC__PAYLOAD_RESP_APP_GET_DESC = 523,
   RPC__PAYLOAD_RESP_WIFI_SET_PS = 526,
   RPC__PAYLOAD_RESP_WIFI_GET_PS = 527,
   RPC__PAYLOAD_RESP_OTA_BEGIN = 528,
@@ -5031,6 +5166,13 @@ struct  Rpc
     RpcReqSuppDppBootstrapGen *req_supp_dpp_bootstrap_gen;
     RpcReqSuppDppStartListen *req_supp_dpp_start_listen;
     RpcReqSuppDppStopListen *req_supp_dpp_stop_listen;
+    /*
+     *Rpc_Req_StartSoftAP                 req_start_softap                  = 267;
+     *Rpc_Req_SoftAPConnectedSTA          req_softap_connected_stas_list    = 268;
+     *Rpc_Req_GetStatus                   req_stop_softap                   = 269;
+     */
+    RpcReqOTAActivate *req_ota_activate;
+    RpcReqAppGetDesc *req_app_get_desc;
     RpcReqSetPs *req_wifi_set_ps;
     RpcReqGetPs *req_wifi_get_ps;
     RpcReqOTABegin *req_ota_begin;
@@ -5132,6 +5274,14 @@ struct  Rpc
     RpcRespSuppDppBootstrapGen *resp_supp_dpp_bootstrap_gen;
     RpcRespSuppDppStartListen *resp_supp_dpp_start_listen;
     RpcRespSuppDppStopListen *resp_supp_dpp_stop_listen;
+    /*
+     *Rpc_Resp_SetSoftAPVendorSpecificIE  resp_set_softap_vendor_specific_ie = 522;
+     *Rpc_Resp_StartSoftAP                resp_start_softap                  = 523;
+     *Rpc_Resp_SoftAPConnectedSTA         resp_softap_connected_stas_list    = 524;
+     *Rpc_Resp_GetStatus                  resp_stop_softap                   = 525;
+     */
+    RpcRespOTAActivate *resp_ota_activate;
+    RpcRespAppGetDesc *resp_app_get_desc;
     RpcRespSetPs *resp_wifi_set_ps;
     RpcRespGetPs *resp_wifi_get_ps;
     RpcRespOTABegin *resp_ota_begin;
@@ -6124,6 +6274,25 @@ WifiTwtConfig *
 void   wifi_twt_config__free_unpacked
                      (WifiTwtConfig *message,
                       ProtobufCAllocator *allocator);
+/* EspAppDesc methods */
+void   esp_app_desc__init
+                     (EspAppDesc         *message);
+size_t esp_app_desc__get_packed_size
+                     (const EspAppDesc   *message);
+size_t esp_app_desc__pack
+                     (const EspAppDesc   *message,
+                      uint8_t             *out);
+size_t esp_app_desc__pack_to_buffer
+                     (const EspAppDesc   *message,
+                      ProtobufCBuffer     *buffer);
+EspAppDesc *
+       esp_app_desc__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   esp_app_desc__free_unpacked
+                     (EspAppDesc *message,
+                      ProtobufCAllocator *allocator);
 /* ConnectedSTAList methods */
 void   connected_stalist__init
                      (ConnectedSTAList         *message);
@@ -6503,6 +6672,82 @@ RpcRespOTAEnd *
                       const uint8_t       *data);
 void   rpc__resp__otaend__free_unpacked
                      (RpcRespOTAEnd *message,
+                      ProtobufCAllocator *allocator);
+/* RpcReqOTAActivate methods */
+void   rpc__req__otaactivate__init
+                     (RpcReqOTAActivate         *message);
+size_t rpc__req__otaactivate__get_packed_size
+                     (const RpcReqOTAActivate   *message);
+size_t rpc__req__otaactivate__pack
+                     (const RpcReqOTAActivate   *message,
+                      uint8_t             *out);
+size_t rpc__req__otaactivate__pack_to_buffer
+                     (const RpcReqOTAActivate   *message,
+                      ProtobufCBuffer     *buffer);
+RpcReqOTAActivate *
+       rpc__req__otaactivate__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   rpc__req__otaactivate__free_unpacked
+                     (RpcReqOTAActivate *message,
+                      ProtobufCAllocator *allocator);
+/* RpcRespOTAActivate methods */
+void   rpc__resp__otaactivate__init
+                     (RpcRespOTAActivate         *message);
+size_t rpc__resp__otaactivate__get_packed_size
+                     (const RpcRespOTAActivate   *message);
+size_t rpc__resp__otaactivate__pack
+                     (const RpcRespOTAActivate   *message,
+                      uint8_t             *out);
+size_t rpc__resp__otaactivate__pack_to_buffer
+                     (const RpcRespOTAActivate   *message,
+                      ProtobufCBuffer     *buffer);
+RpcRespOTAActivate *
+       rpc__resp__otaactivate__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   rpc__resp__otaactivate__free_unpacked
+                     (RpcRespOTAActivate *message,
+                      ProtobufCAllocator *allocator);
+/* RpcReqAppGetDesc methods */
+void   rpc__req__app_get_desc__init
+                     (RpcReqAppGetDesc         *message);
+size_t rpc__req__app_get_desc__get_packed_size
+                     (const RpcReqAppGetDesc   *message);
+size_t rpc__req__app_get_desc__pack
+                     (const RpcReqAppGetDesc   *message,
+                      uint8_t             *out);
+size_t rpc__req__app_get_desc__pack_to_buffer
+                     (const RpcReqAppGetDesc   *message,
+                      ProtobufCBuffer     *buffer);
+RpcReqAppGetDesc *
+       rpc__req__app_get_desc__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   rpc__req__app_get_desc__free_unpacked
+                     (RpcReqAppGetDesc *message,
+                      ProtobufCAllocator *allocator);
+/* RpcRespAppGetDesc methods */
+void   rpc__resp__app_get_desc__init
+                     (RpcRespAppGetDesc         *message);
+size_t rpc__resp__app_get_desc__get_packed_size
+                     (const RpcRespAppGetDesc   *message);
+size_t rpc__resp__app_get_desc__pack
+                     (const RpcRespAppGetDesc   *message,
+                      uint8_t             *out);
+size_t rpc__resp__app_get_desc__pack_to_buffer
+                     (const RpcRespAppGetDesc   *message,
+                      ProtobufCBuffer     *buffer);
+RpcRespAppGetDesc *
+       rpc__resp__app_get_desc__unpack
+                     (ProtobufCAllocator  *allocator,
+                      size_t               len,
+                      const uint8_t       *data);
+void   rpc__resp__app_get_desc__free_unpacked
+                     (RpcRespAppGetDesc *message,
                       ProtobufCAllocator *allocator);
 /* RpcReqWifiSetMaxTxPower methods */
 void   rpc__req__wifi_set_max_tx_power__init
@@ -10406,6 +10651,9 @@ typedef void (*WifiItwtSetupConfig_Closure)
 typedef void (*WifiTwtConfig_Closure)
                  (const WifiTwtConfig *message,
                   void *closure_data);
+typedef void (*EspAppDesc_Closure)
+                 (const EspAppDesc *message,
+                  void *closure_data);
 typedef void (*ConnectedSTAList_Closure)
                  (const ConnectedSTAList *message,
                   void *closure_data);
@@ -10465,6 +10713,18 @@ typedef void (*RpcReqOTAEnd_Closure)
                   void *closure_data);
 typedef void (*RpcRespOTAEnd_Closure)
                  (const RpcRespOTAEnd *message,
+                  void *closure_data);
+typedef void (*RpcReqOTAActivate_Closure)
+                 (const RpcReqOTAActivate *message,
+                  void *closure_data);
+typedef void (*RpcRespOTAActivate_Closure)
+                 (const RpcRespOTAActivate *message,
+                  void *closure_data);
+typedef void (*RpcReqAppGetDesc_Closure)
+                 (const RpcReqAppGetDesc *message,
+                  void *closure_data);
+typedef void (*RpcRespAppGetDesc_Closure)
+                 (const RpcRespAppGetDesc *message,
                   void *closure_data);
 typedef void (*RpcReqWifiSetMaxTxPower_Closure)
                  (const RpcReqWifiSetMaxTxPower *message,
@@ -11121,6 +11381,7 @@ extern const ProtobufCMessageDescriptor wifi_protocols__descriptor;
 extern const ProtobufCMessageDescriptor wifi_bandwidths__descriptor;
 extern const ProtobufCMessageDescriptor wifi_itwt_setup_config__descriptor;
 extern const ProtobufCMessageDescriptor wifi_twt_config__descriptor;
+extern const ProtobufCMessageDescriptor esp_app_desc__descriptor;
 extern const ProtobufCMessageDescriptor connected_stalist__descriptor;
 extern const ProtobufCMessageDescriptor eap_fast_config__descriptor;
 extern const ProtobufCMessageDescriptor rpc__req__get_mac_address__descriptor;
@@ -11141,6 +11402,10 @@ extern const ProtobufCMessageDescriptor rpc__req__otawrite__descriptor;
 extern const ProtobufCMessageDescriptor rpc__resp__otawrite__descriptor;
 extern const ProtobufCMessageDescriptor rpc__req__otaend__descriptor;
 extern const ProtobufCMessageDescriptor rpc__resp__otaend__descriptor;
+extern const ProtobufCMessageDescriptor rpc__req__otaactivate__descriptor;
+extern const ProtobufCMessageDescriptor rpc__resp__otaactivate__descriptor;
+extern const ProtobufCMessageDescriptor rpc__req__app_get_desc__descriptor;
+extern const ProtobufCMessageDescriptor rpc__resp__app_get_desc__descriptor;
 extern const ProtobufCMessageDescriptor rpc__req__wifi_set_max_tx_power__descriptor;
 extern const ProtobufCMessageDescriptor rpc__resp__wifi_set_max_tx_power__descriptor;
 extern const ProtobufCMessageDescriptor rpc__req__wifi_get_max_tx_power__descriptor;

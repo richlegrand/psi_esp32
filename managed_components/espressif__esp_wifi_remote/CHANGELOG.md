@@ -1,5 +1,64 @@
 # Changelog
 
+## [1.2.2](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.2.2)
+
+### Bug Fixes
+
+- Remove legacy compat esp_interface.h ([e67f024](https://github.com/espressif/esp-wifi-remote/commit/e67f024), [#80](https://github.com/espressif/esp-wifi-remote/issues/80))
+- Use P4 chip-rev 1 in CI ([cbd9d1b](https://github.com/espressif/esp-wifi-remote/commit/cbd9d1b))
+- Add optional mqtt dependency ([548b002](https://github.com/espressif/esp-wifi-remote/commit/548b002))
+- Mark IDF v6.1 as master ([8a18cf7](https://github.com/espressif/esp-wifi-remote/commit/8a18cf7))
+- Update per v6.0 changes ([0b57724](https://github.com/espressif/esp-wifi-remote/commit/0b57724))
+- Update per recent v6.1 changes ([e3bf8fd](https://github.com/espressif/esp-wifi-remote/commit/e3bf8fd))
+
+## [1.2.1](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.2.1)
+
+### Bug Fixes
+
+- Update per recent v6.0 changes ([092fdba](https://github.com/espressif/esp-wifi-remote/commit/092fdba))
+- Update per recent v6.1 changes ([f042ac5](https://github.com/espressif/esp-wifi-remote/commit/f042ac5))
+- Update per recent v5.5 changes ([7550857](https://github.com/espressif/esp-wifi-remote/commit/7550857))
+- Update per recent v5.4 changes ([e1b25af](https://github.com/espressif/esp-wifi-remote/commit/e1b25af))
+
+## [1.2.0](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.2.0)
+
+### Features
+
+- Add support for v6.1 release branch ([13df7d5](https://github.com/espressif/esp-wifi-remote/commit/13df7d5))
+- Add support for IDF v5.5.1 release tag ([361d3a9](https://github.com/espressif/esp-wifi-remote/commit/361d3a9))
+
+### Bug Fixes
+
+- Move eppp slave to the wrmt-over-eppp component ([36a35a7](https://github.com/espressif/esp-wifi-remote/commit/36a35a7))
+
+## [1.1.6](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.1.6)
+
+### Bug Fixes
+
+- Fix Kconfig source indirecting per IDF version ([01e106c](https://github.com/espressif/esp-wifi-remote/commit/01e106c))
+- Update per v5.3 changes ([93cc864](https://github.com/espressif/esp-wifi-remote/commit/93cc864))
+
+## [1.1.5](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.1.5)
+
+### Bug Fixes
+
+- Fix issues when building the same file twice ([f195b64](https://github.com/espressif/esp-wifi-remote/commit/f195b64), [#84](https://github.com/espressif/esp-wifi-remote/issues/84))
+- Fix two-station example init issues ([2e7ae1b](https://github.com/espressif/esp-wifi-remote/commit/2e7ae1b))
+- Update per v6.0 changes ([12bff90](https://github.com/espressif/esp-wifi-remote/commit/12bff90))
+- Update per v5.4 changes ([88e1116](https://github.com/espressif/esp-wifi-remote/commit/88e1116))
+
+## [1.1.4](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.1.4)
+
+### Bug Fixes
+
+- Temporarily add esp_interface.h ([c02879b](https://github.com/espressif/esp-wifi-remote/commit/c02879b))
+
+## [1.1.3](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.1.3)
+
+### Bug Fixes
+
+- Update per v6.0 changes ([cd6d4ab](https://github.com/espressif/esp-wifi-remote/commit/cd6d4ab))
+
 ## [1.1.2](https://github.com/espressif/esp-wifi-remote/commits/wifi_remote-v1.1.2)
 
 ### Bug Fixes

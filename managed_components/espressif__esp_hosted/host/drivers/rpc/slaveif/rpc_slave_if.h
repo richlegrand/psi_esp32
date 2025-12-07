@@ -13,6 +13,7 @@
 #include "esp_wifi.h"
 #include "esp_mac.h"
 #include "esp_wifi_types.h"
+#include "esp_hosted_misc.h"
 #include "port_esp_hosted_host_wifi_config.h"
 
 #if H_WIFI_ENTERPRISE_SUPPORT
@@ -406,10 +407,15 @@ typedef struct Ctrl_cmd_t {
 
 		rcp_feature_control_t       feature_control;
 
+		esp_hosted_app_desc_t       app_desc;
 #if H_WIFI_HE_SUPPORT
 		wifi_twt_config_t           wifi_twt_config;
 
+#if H_WIFI_HE_GREATER_THAN_ESP_IDF_5_3
 		wifi_itwt_setup_config_t    wifi_itwt_setup_config;
+#else
+		wifi_twt_setup_config_t     wifi_twt_setup_config;
+#endif
 
 		int                         wifi_itwt_flow_id;
 
@@ -659,6 +665,10 @@ ctrl_cmd_t * rpc_slaveif_ota_write(ctrl_cmd_t *req);
  * Creates timer which reset ESP32 after 5 sec */
 ctrl_cmd_t * rpc_slaveif_ota_end(ctrl_cmd_t *req);
 
+/* Performs an OTA activate operation for ESP32, It reboots the ESP32
+ * to activate the newly written OTA partition */
+ctrl_cmd_t * rpc_slaveif_ota_activate(ctrl_cmd_t *req);
+
 /* Gets the co-processor FW Version */
 ctrl_cmd_t * rpc_slaveif_get_coprocessor_fwversion(ctrl_cmd_t *req);
 
@@ -710,6 +720,7 @@ ctrl_cmd_t * rpc_slaveif_wifi_get_band_mode(ctrl_cmd_t *req);
 ctrl_cmd_t * rpc_slaveif_set_slave_dhcp_dns_status(ctrl_cmd_t *req);
 ctrl_cmd_t * rpc_slaveif_iface_mac_addr_set_get(ctrl_cmd_t *req);
 ctrl_cmd_t * rpc_slaveif_feature_control(ctrl_cmd_t *req);
+ctrl_cmd_t * rpc_slaveif_get_coprocessor_app_desc(ctrl_cmd_t *req);
 
 ctrl_cmd_t * rpc_slaveif_iface_mac_addr_set_get(ctrl_cmd_t *req);
 ctrl_cmd_t * rpc_slave_feature_command(ctrl_cmd_t *req);;

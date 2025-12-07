@@ -1,6 +1,7 @@
 #ifndef ESP_LITTLEFS_H__
 #define ESP_LITTLEFS_H__
 
+#include "sdkconfig.h"
 #include "esp_err.h"
 #include "esp_idf_version.h"
 #include <stdbool.h>
@@ -14,10 +15,10 @@
 extern "C" {
 #endif
 
-#define ESP_LITTLEFS_VERSION_NUMBER "1.20.1"
+#define ESP_LITTLEFS_VERSION_NUMBER "1.20.3"
 #define ESP_LITTLEFS_VERSION_MAJOR 1
 #define ESP_LITTLEFS_VERSION_MINOR 20
-#define ESP_LITTLEFS_VERSION_PATCH 1
+#define ESP_LITTLEFS_VERSION_PATCH 3
 
 #ifdef ESP8266
 // ESP8266 RTOS SDK default enables VFS DIR support

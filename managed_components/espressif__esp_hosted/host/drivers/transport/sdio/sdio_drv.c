@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2024 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2024-2025 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -910,46 +910,6 @@ static void sdio_data_to_rx_buf_task(void const* pvParameters)
 }
 
 
-#if H_HOST_USES_STATIC_NETIF
-esp_netif_t *s_netif_sta = NULL;
-
-esp_netif_t * create_sta_netif_with_static_ip(void)
-{
-	ESP_LOGI(TAG, "Create netif with static IP");
-	/* Create "almost" default station, but with un-flagged DHCP client */
-	esp_netif_inherent_config_t netif_cfg;
-	memcpy(&netif_cfg, ESP_NETIF_BASE_DEFAULT_WIFI_STA, sizeof(netif_cfg));
-	netif_cfg.flags &= ~ESP_NETIF_DHCP_CLIENT;
-	esp_netif_config_t cfg_sta = {
-		.base = &netif_cfg,
-		.stack = ESP_NETIF_NETSTACK_DEFAULT_WIFI_STA,
-	};
-	esp_netif_t *sta_netif = esp_netif_new(&cfg_sta);
-	assert(sta_netif);
-
-	ESP_LOGI(TAG, "Creating slave sta netif with static IP");
-
-	ESP_ERROR_CHECK(esp_netif_attach_wifi_station(sta_netif));
-	ESP_ERROR_CHECK(esp_wifi_set_default_wifi_sta_handlers());
-
-	/* stop dhcpc */
-	ESP_ERROR_CHECK(esp_netif_dhcpc_stop(sta_netif));
-
-	return sta_netif;
-}
-
-static esp_err_t create_static_netif(void)
-{
-	/* Only initialize networking stack if not already initialized */
-	if (!s_netif_sta) {
-		esp_netif_init();
-		esp_event_loop_create_default();
-		s_netif_sta = create_sta_netif_with_static_ip();
-		assert(s_netif_sta);
-	}
-	return ESP_OK;
-}
-#endif
 
 static void sdio_read_task(void const* pvParameters)
 {
@@ -977,9 +937,6 @@ static void sdio_read_task(void const* pvParameters)
 			break;
 		}
 	}
-#if H_HOST_USES_STATIC_NETIF
-	create_static_netif();
-#endif
 
 
 #if DO_COMBINED_REG_READ
@@ -1401,23 +1358,41 @@ void check_if_max_freq_used(uint8_t chip_type)
 #endif
 }
 
+#define CARD_INIT_DELAY_MS 100
 
-static esp_err_t transport_card_init(void *bus_handle)
+// retry until timeout_ms
+static esp_err_t transport_card_init(void *bus_handle, uint32_t timeout_ms)
 {
-	return g_h.funcs->_h_sdio_card_init(bus_handle);
+	int num_loops = timeout_ms / CARD_INIT_DELAY_MS;
+	int i = 0;
+	int res = ESP_FAIL;
+
+	// call card init, even if timeout_ms is 0
+	do {
+		res = g_h.funcs->_h_sdio_card_init(bus_handle, (i == 0) ? true : false);
+		g_h.funcs->_h_msleep(100);
+		if (res == ESP_OK) {
+			break;
+		}
+		i++;
+	} while (i < num_loops);
+
+	return res;
 }
 
 static esp_err_t transport_gpio_reset(void *bus_handle, gpio_pin_t reset_pin)
 {
 	g_h.funcs->_h_config_gpio(reset_pin.port, reset_pin.pin, H_GPIO_MODE_DEF_OUTPUT);
 	g_h.funcs->_h_write_gpio(reset_pin.port, reset_pin.pin, H_RESET_VAL_ACTIVE);
-	g_h.funcs->_h_msleep(1);
+	g_h.funcs->_h_msleep(10);
 	g_h.funcs->_h_write_gpio(reset_pin.port, reset_pin.pin, H_RESET_VAL_INACTIVE);
-	g_h.funcs->_h_msleep(1);
+	g_h.funcs->_h_msleep(10);
 	g_h.funcs->_h_write_gpio(reset_pin.port, reset_pin.pin, H_RESET_VAL_ACTIVE);
-	g_h.funcs->_h_msleep(1200);
+	g_h.funcs->_h_msleep(H_HOST_SDIO_RESET_DELAY_MS);
 	return ESP_OK;
 }
+
+#define CARD_INIT_TIMEOUT_MS 1500
 
 int ensure_slave_bus_ready(void *bus_handle)
 {
@@ -1436,7 +1411,7 @@ int ensure_slave_bus_ready(void *bus_handle)
 #if H_SLAVE_RESET_ONLY_IF_NECESSARY
 	{
 		/* Reset will be done later if needed during communication initialization */
-		res = transport_card_init(bus_handle);
+		res = transport_card_init(bus_handle, CARD_INIT_TIMEOUT_MS);
 		if (res) {
 			ESP_LOGE(TAG, "card init failed");
 		} else {
@@ -1451,7 +1426,7 @@ int ensure_slave_bus_ready(void *bus_handle)
 			transport_gpio_reset(bus_handle, reset_pin);
 		}
 
-		res = transport_card_init(bus_handle);
+		res = transport_card_init(bus_handle, CARD_INIT_TIMEOUT_MS);
 		if (res) {
 			ESP_LOGE(TAG, "card init failed even after slave reset");
 		} else {
@@ -1467,7 +1442,7 @@ int ensure_slave_bus_ready(void *bus_handle)
 		g_h.funcs->_h_msleep(500);
 		set_transport_state(TRANSPORT_RX_ACTIVE);
 
-		res = transport_card_init(bus_handle);
+		res = transport_card_init(bus_handle, CARD_INIT_TIMEOUT_MS);
 		if (res) {
 			ESP_LOGE(TAG, "card init failed");
 		} else {
@@ -1479,7 +1454,7 @@ int ensure_slave_bus_ready(void *bus_handle)
 		ESP_LOGW(TAG, "Reset slave using GPIO[%u]", reset_pin.pin);
 		transport_gpio_reset(bus_handle, reset_pin);
 
-		res = transport_card_init(bus_handle);
+		res = transport_card_init(bus_handle, CARD_INIT_TIMEOUT_MS);
 		if (res) {
 			ESP_LOGE(TAG, "card init failed");
 		} else {

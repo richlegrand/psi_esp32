@@ -70,6 +70,7 @@ int compose_rpc_req(Rpc *req, ctrl_cmd_t *app_req, int32_t *failure_status)
 	case RPC_ID__Req_WifiGetPs:
 	case RPC_ID__Req_OTABegin:
 	case RPC_ID__Req_OTAEnd:
+	case RPC_ID__Req_OTAActivate:
 	case RPC_ID__Req_WifiDeinit:
 	case RPC_ID__Req_WifiStart:
 	case RPC_ID__Req_WifiStop:
@@ -91,6 +92,7 @@ int compose_rpc_req(Rpc *req, ctrl_cmd_t *app_req, int32_t *failure_status)
 	case RPC_ID__Req_WifiStaGetAid:
 	case RPC_ID__Req_WifiGetBand:
 	case RPC_ID__Req_WifiGetBandMode:
+	case RPC_ID__Req_AppGetDesc:
 #if H_WIFI_ENTERPRISE_SUPPORT
 	case RPC_ID__Req_WifiStaEnterpriseEnable:
 	case RPC_ID__Req_WifiStaEnterpriseDisable:
@@ -517,7 +519,11 @@ int compose_rpc_req(Rpc *req, ctrl_cmd_t *app_req, int32_t *failure_status)
 		RPC_ALLOC_ASSIGN(RpcReqWifiStaItwtSetup, req_wifi_sta_itwt_setup,
 				rpc__req__wifi_sta_itwt_setup__init);
 		RPC_ALLOC_ELEMENT(WifiItwtSetupConfig, req_payload->setup_config, wifi_itwt_setup_config__init);
+#if H_WIFI_HE_GREATER_THAN_ESP_IDF_5_3
 		wifi_itwt_setup_config_t * p_a_cfg = &app_req->u.wifi_itwt_setup_config;
+#else
+		wifi_twt_setup_config_t * p_a_cfg = &app_req->u.wifi_twt_setup_config;
+#endif
 		WifiItwtSetupConfig * p_c_cfg = req_payload->setup_config;
 
 		p_c_cfg->setup_cmd = p_a_cfg->setup_cmd;

@@ -562,6 +562,9 @@ int rpc_rsp_callback(ctrl_cmd_t * app_resp)
 	} case RPC_ID__Resp_OTAEnd : {
 		ESP_LOGV(TAG, "OTA end success");
 		break;
+	} case RPC_ID__Resp_OTAActivate : {
+		ESP_LOGV(TAG, "OTA activate success");
+		break;
 	} case RPC_ID__Resp_WifiSetMaxTxPower: {
 		ESP_LOGV(TAG, "Set wifi max tx power success");
 		break;
@@ -646,6 +649,7 @@ int rpc_rsp_callback(ctrl_cmd_t * app_resp)
 	case RPC_ID__Resp_IfaceMacAddrSetGet:
 	case RPC_ID__Resp_IfaceMacAddrLenGet:
 	case RPC_ID__Resp_FeatureControl:
+	case RPC_ID__Resp_AppGetDesc:
 #if H_WIFI_HE_SUPPORT
 	case RPC_ID__Resp_WifiStaTwtConfig:
 	case RPC_ID__Resp_WifiStaItwtSetup:
@@ -837,6 +841,17 @@ int rpc_ota_end(void)
 	return rpc_rsp_callback(resp);
 }
 
+int rpc_ota_activate(void)
+{
+	/* implemented synchronous */
+	ctrl_cmd_t *req = RPC_DEFAULT_REQ();
+	ctrl_cmd_t *resp = NULL;
+
+	resp = rpc_slaveif_ota_activate(req);
+
+	return rpc_rsp_callback(resp);
+}
+
 esp_err_t rpc_get_coprocessor_fwversion(esp_hosted_coprocessor_fwver_t *ver_info)
 {
 	/* implemented synchronous */
@@ -948,7 +963,11 @@ esp_err_t rpc_wifi_sta_twt_config(wifi_twt_config_t *config)
 	return rpc_rsp_callback(resp);
 }
 
+#if H_WIFI_HE_GREATER_THAN_ESP_IDF_5_3
 esp_err_t rpc_wifi_sta_itwt_setup(wifi_itwt_setup_config_t *setup_config)
+#else
+esp_err_t rpc_wifi_sta_itwt_setup(wifi_twt_setup_config_t *setup_config)
+#endif
 {
 	/* implemented synchronous */
 	ctrl_cmd_t *req = RPC_DEFAULT_REQ();
@@ -957,7 +976,11 @@ esp_err_t rpc_wifi_sta_itwt_setup(wifi_itwt_setup_config_t *setup_config)
 	if (!setup_config)
 		return FAILURE;
 
+#if H_WIFI_HE_GREATER_THAN_ESP_IDF_5_3
 	g_h.funcs->_h_memcpy(&req->u.wifi_itwt_setup_config, setup_config, sizeof(wifi_itwt_setup_config_t));
+#else
+	g_h.funcs->_h_memcpy(&req->u.wifi_twt_setup_config, setup_config, sizeof(wifi_twt_setup_config_t));
+#endif
 	resp = rpc_slaveif_wifi_sta_itwt_setup(req);
 	return rpc_rsp_callback(resp);
 }
@@ -2053,6 +2076,7 @@ esp_err_t rpc_eap_client_set_eap_methods(esp_eap_method_t methods)
 #endif
 
 #if H_DPP_SUPPORT
+#if H_SUPP_DPP_SUPPORT
 esp_err_t rpc_supp_dpp_init(esp_supp_dpp_event_cb_t evt_cb)
 {
 	/* implemented synchronous */
@@ -2079,6 +2103,20 @@ esp_err_t rpc_supp_dpp_init(esp_supp_dpp_event_cb_t evt_cb)
 	resp = rpc_slaveif_supp_dpp_init(req);
 	return rpc_rsp_callback(resp);
 }
+#else // H_SUPP_DPP_SUPPORT
+esp_err_t rpc_supp_dpp_init(void)
+{
+	/* implemented synchronous */
+	ctrl_cmd_t *req = RPC_DEFAULT_REQ();
+	ctrl_cmd_t *resp = NULL;
+
+	// no callback
+	req->u.dpp_enable_cb = false;
+
+	resp = rpc_slaveif_supp_dpp_init(req);
+	return rpc_rsp_callback(resp);
+}
+#endif
 
 esp_err_t rpc_supp_dpp_deinit(void)
 {
@@ -2269,6 +2307,20 @@ esp_err_t rpc_iface_mac_addr_set_get(bool set, uint8_t *mac, size_t mac_len, esp
 	// copy mac address for get
 	if (!set && resp && resp->resp_event_status == SUCCESS) {
 		memcpy(mac, resp->u.iface_mac.mac, mac_len);
+	}
+	return rpc_rsp_callback(resp);
+}
+
+esp_err_t rpc_iface_get_coprocessor_app_desc(esp_hosted_app_desc_t *app_desc)
+{
+	/* implemented synchronous */
+	ctrl_cmd_t *req = RPC_DEFAULT_REQ();
+	ctrl_cmd_t *resp = NULL;
+
+	resp = rpc_slaveif_get_coprocessor_app_desc(req);
+
+	if (resp && resp->resp_event_status == SUCCESS) {
+		g_h.funcs->_h_memcpy(app_desc, &resp->u.app_desc, sizeof(esp_hosted_app_desc_t));
 	}
 	return rpc_rsp_callback(resp);
 }
