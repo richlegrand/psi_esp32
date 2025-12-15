@@ -1,6 +1,16 @@
-// ESP32-P4 libdatachannel H.264 WebRTC streamer
+/**
+ * PSI ESP32 WebRTC Server
+ *
+ * Main entry point - initializes WiFi and starts WebRTC server
+ * with HTTP-like handlers over DataChannel (SWSP protocol)
+ */
+
 #include <stdio.h>
 #include <string.h>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_wifi.h"
@@ -8,31 +18,27 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "nvs_flash.h"
-#include "esp_littlefs.h"  // From joltwallet/littlefs component
+#include "esp_littlefs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
-
-// WebRTC streaming functionality
-#include "rtc/rtc.hpp"
-#include "streamer.hpp"
-#include "esp32_psram_init.h"
-
-// C++ STL headers for testing
-#include <vector>
-#include <map>
-#include <string>
-#include <memory>
-#include <functional>
-#include <shared_mutex>
 #include "esp_heap_caps.h"
 
-static const char *TAG = "h264_streamer";
+#include "rtc/rtc.hpp"
+#include "httpd_server.hpp"
+#include "httpd_test.h"
+#include "esp32_psram_init.h"
 
-// WiFi credentials - replace with your network
+static const char *TAG = "psi_main";
+
+// WiFi credentials
 #define WIFI_SSID "psinet"
 #define WIFI_PASS "4053487993"
 #define MAXIMUM_RETRY 5
+
+// PSI server configuration (set via environment variables for httpd_start)
+#define PSI_SERVER_URL "psi.vizycam.com"
+#define DEVICE_UID "0123456789"
 
 // FreeRTOS event group for WiFi connection
 static EventGroupHandle_t s_wifi_event_group;
@@ -42,6 +48,10 @@ static EventGroupHandle_t s_wifi_event_group;
 
 static int s_retry_num = 0;
 static esp_netif_t *s_sta_netif = NULL;
+
+//=============================================================================
+// WiFi Event Handler
+//=============================================================================
 
 static void wifi_event_handler(void* arg, esp_event_base_t event_base,
                                int32_t event_id, void* event_data) {
@@ -61,7 +71,7 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
 
-        // Now that the interface is up, create IPv6 link-local address
+        // Create IPv6 link-local address
         if (s_sta_netif) {
             esp_err_t ipv6_ret = esp_netif_create_ip6_linklocal(s_sta_netif);
             if (ipv6_ret == ESP_OK) {
@@ -79,14 +89,16 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-// Initialize WiFi with IPv6 support (ESP-Hosted handles remote WiFi transparently)
+//=============================================================================
+// WiFi Initialization
+//=============================================================================
+
 static void wifi_init_sta(void) {
     s_wifi_event_group = xEventGroupCreate();
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
 
-    // Create default WiFi station (ESP-Hosted redirects to ESP32-C6)
     s_sta_netif = esp_netif_create_default_wifi_sta();
 
     wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
@@ -119,7 +131,6 @@ static void wifi_init_sta(void) {
     wifi_config.sta.pmf_cfg.capable = true;
     wifi_config.sta.pmf_cfg.required = false;
 
-    // Use standard WiFi APIs (ESP-Hosted redirects to ESP32-C6 automatically)
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
     ESP_ERROR_CHECK(esp_wifi_start());
@@ -127,14 +138,17 @@ static void wifi_init_sta(void) {
     ESP_LOGI(TAG, "wifi_init_sta finished.");
 }
 
-// Initialize LittleFS
+//=============================================================================
+// LittleFS Initialization
+//=============================================================================
+
 static void littlefs_init(void) {
     ESP_LOGI(TAG, "Initializing LittleFS");
 
     esp_vfs_littlefs_conf_t conf = {};
     conf.base_path = "/littlefs";
     conf.partition_label = "storage";
-    conf.format_if_mount_failed = false;  // Don't format - we have media files
+    conf.format_if_mount_failed = false;
     conf.dont_mount = false;
 
     esp_err_t ret = esp_vfs_littlefs_register(&conf);
@@ -158,9 +172,12 @@ static void littlefs_init(void) {
     }
 }
 
+//=============================================================================
+// Main Entry Point
+//=============================================================================
 
 extern "C" void app_main(void) {
-    ESP_LOGI(TAG, "Starting H.264 WebRTC streamer...");
+    ESP_LOGI(TAG, "Starting PSI ESP32 WebRTC Server...");
 
     // Initialize NVS (required for WiFi)
     esp_err_t ret = nvs_flash_init();
@@ -170,23 +187,23 @@ extern "C" void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
-    // Enable PSRAM as default malloc target (before any major allocations)
+    // Enable PSRAM as default malloc target
     enable_psram_malloc();
 
-    // Initialize LittleFS for H.264 media files
+    // Initialize LittleFS for static files
     littlefs_init();
 
     ESP_LOGI(TAG, "After LittleFS - Internal RAM: %d KB free",
              heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
-    // Initialize WiFi with ESP-Hosted
+    // Initialize WiFi
     ESP_LOGI(TAG, "Initializing WiFi with ESP-Hosted...");
     wifi_init_sta();
 
     ESP_LOGI(TAG, "After WiFi init - Internal RAM: %d KB free",
              heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
-    // Wait for IPv4 connection first
+    // Wait for WiFi connection
     EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
             WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
             pdFALSE,
@@ -194,15 +211,15 @@ extern "C" void app_main(void) {
             portMAX_DELAY);
 
     if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "connected to ap SSID:%s", WIFI_SSID);
+        ESP_LOGI(TAG, "Connected to AP SSID:%s", WIFI_SSID);
 
-        // Wait for IPv6 address (with timeout since it's optional)
+        // Wait for IPv6 address (with timeout)
         ESP_LOGI(TAG, "Waiting for IPv6 address...");
         EventBits_t ipv6_bits = xEventGroupWaitBits(s_wifi_event_group,
                 WIFI_IPV6_BIT,
                 pdFALSE,
                 pdFALSE,
-                pdMS_TO_TICKS(10000)); // 10 second timeout
+                pdMS_TO_TICKS(10000));
 
         if (ipv6_bits & WIFI_IPV6_BIT) {
             ESP_LOGI(TAG, "IPv6 link-local address acquired");
@@ -218,22 +235,34 @@ extern "C" void app_main(void) {
         return;
     }
 
-    // Initialize libdatachannel for WebRTC
-    ESP_LOGI(TAG, "Before InitLogger - Internal RAM: %d KB free",
-             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
-
+    // Initialize libdatachannel
+    ESP_LOGI(TAG, "Initializing libdatachannel...");
     rtc::InitLogger(rtc::LogLevel::Info);
-
-    ESP_LOGI(TAG, "After InitLogger - Internal RAM: %d KB free",
-             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
-
-    // ESP32: Start networking threads now that FreeRTOS scheduler is running
     rtc::StartNetworking();
 
-    ESP_LOGI(TAG, "After StartNetworking - Internal RAM: %d KB free",
+    ESP_LOGI(TAG, "After libdatachannel init - Internal RAM: %d KB free",
              heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
-    // Start the H.264 WebRTC streamer
-    ESP_LOGI(TAG, "Starting WebRTC streamer...");
-    startStreamer();
+    // Set environment variables for httpd_start() to use
+    setenv("DEVICE_UID", DEVICE_UID, 1);
+    setenv("PSI_SERVER", PSI_SERVER_URL, 1);
+
+    // Start HTTP server (uses WebRTC DataChannel transport)
+    // This is the ESP-IDF compatible API - same code works on desktop and ESP32
+    esp_err_t server_ret = httpd_test_start();
+    if (server_ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start HTTP server: %d", server_ret);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Server started! Access via: https://%s/%s", PSI_SERVER_URL, DEVICE_UID);
+
+    // Main loop - monitor heap
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+        size_t free_heap = esp_get_free_heap_size();
+        size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+        ESP_LOGI(TAG, "Heap: %lu KB free | Internal: %lu KB",
+                 free_heap / 1024, free_internal / 1024);
+    }
 }

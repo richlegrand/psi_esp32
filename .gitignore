@@ -2,10 +2,13 @@
 build/
 sdkconfig.old
 sdkconfig.bak
+sdkconfig.new
 *.pyc
+__pycache__/
 
 # Editor artifacts
 .vscode/
+.idea/
 *.swp
 *~
 .DS_Store
@@ -15,12 +18,16 @@ dependencies.lock
 managed_components/
 managed_components.bak/
 
+# Component registry cache
+.component_hash
+
 # Debug artifacts
 *.bin
 coredump*.bin
 
 # Backup files
 *.backup
+*.bak
 
 # Media files (large binary files)
 media_files/
@@ -36,9 +43,3 @@ heap_trace.dat
 gdb_alloc_trace.txt
 main/leak*.txt
 main/leaks.txt
-
-# Backup files
-*.bak
-
-# Temporary sdkconfig
-sdkconfig.new

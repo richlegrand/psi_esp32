@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "main.cpp" "h264fileparser.cpp" "fileparser.cpp" "opusfileparser.cpp" "stream.cpp" "dispatchqueue.cpp" "helpers.cpp" "streamer_main.cpp" "memory_tracker.cpp" "alloc_trace.c"
+    SRCS "psi_main.cpp" "httpd_server.cpp" "httpd_test.c"
     INCLUDE_DIRS "."
     REQUIRES
         libdatachannel
@@ -9,9 +9,10 @@ idf_component_register(
         esp_wifi         # WiFi connectivity
         esp_wifi_remote  # WiFi Remote for ESP32-C6 co-processor
         esp_hosted       # ESP-Hosted transport for ESP32-C6
-        littlefs         # LittleFS for media file storage (from joltwallet/littlefs)
+        littlefs         # LittleFS for media file storage
         json             # Built-in cJSON for WebSocket signaling
-        tcp_transport        # TCP transport (includes WebSocket support)
+        esp_websocket_client  # WebSocket client for signaling
+        esp_http_server  # For httpd_uri_t and httpd_req_t types
 )
 
 # Create LittleFS image from media_files directory

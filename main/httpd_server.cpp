@@ -1,0 +1,789 @@
+/**
+ * PSI WebRTC Server for ESP32
+ *
+ * Provides WebRTC connectivity with SWSP protocol support for HTTP-like
+ * request/response over DataChannel.
+ *
+ * Ported from libdatachannel_device/httpd_server.cpp
+ */
+
+#include "httpd_server.hpp"
+#include <cJSON.h>
+#include <cstring>
+#include "esp_log.h"
+#include "esp_crt_bundle.h"
+
+static const char* TAG = "WebRTC";
+
+using namespace rtc;
+
+//=============================================================================
+// WebRTCSession Implementation
+//=============================================================================
+
+WebRTCSession::WebRTCSession(const std::string& client_id,
+                             std::shared_ptr<PeerConnection> pc,
+                             std::shared_ptr<DataChannel> dc)
+    : client_id_(client_id), pc_(pc), dc_(dc) {
+    ESP_LOGI(TAG, "WebRTCSession created for client: %s", client_id.c_str());
+}
+
+WebRTCSession::~WebRTCSession() {
+    ESP_LOGI(TAG, "WebRTCSession destroyed for client: %s", client_id_.c_str());
+}
+
+void WebRTCSession::sendSwspFrame(uint32_t stream_id, uint16_t flags, const std::vector<uint8_t>& payload) {
+    if (!dc_ || !dc_->isOpen()) {
+        ESP_LOGE(TAG, "DataChannel not open, cannot send frame");
+        return;
+    }
+
+    // Build SWSP frame: [stream_id:4][flags:2][length:2][payload:N]
+    std::vector<uint8_t> frame(8 + payload.size());
+
+    // Little Endian encoding
+    frame[0] = stream_id & 0xFF;
+    frame[1] = (stream_id >> 8) & 0xFF;
+    frame[2] = (stream_id >> 16) & 0xFF;
+    frame[3] = (stream_id >> 24) & 0xFF;
+
+    frame[4] = flags & 0xFF;
+    frame[5] = (flags >> 8) & 0xFF;
+
+    uint16_t length = payload.size();
+    frame[6] = length & 0xFF;
+    frame[7] = (length >> 8) & 0xFF;
+
+    // Copy payload
+    std::copy(payload.begin(), payload.end(), frame.begin() + 8);
+
+    // Send
+    dc_->send(reinterpret_cast<const std::byte*>(frame.data()), frame.size());
+}
+
+void WebRTCSession::sendSwspFrame(uint32_t stream_id, uint16_t flags, const std::string& payload) {
+    std::vector<uint8_t> data(payload.begin(), payload.end());
+    sendSwspFrame(stream_id, flags, data);
+}
+
+const httpd_uri_t* WebRTCSession::findHandler(const char* uri, httpd_method_t method) {
+    if (!handlers_) return nullptr;
+
+    for (const auto& h : *handlers_) {
+        if (strcmp(h.uri, uri) == 0 && (h.method == method || h.method == HTTP_ANY)) {
+            return &h;
+        }
+    }
+    return nullptr;
+}
+
+void WebRTCSession::handleSwspFrame(const rtc::binary& frame_data) {
+    if (frame_data.size() < 8) {
+        ESP_LOGE(TAG, "Frame too small: %d", (int)frame_data.size());
+        return;
+    }
+
+    // Parse SWSP header (Little Endian)
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(frame_data.data());
+
+    uint32_t stream_id = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+    uint16_t flags = data[4] | (data[5] << 8);
+    uint16_t length = data[6] | (data[7] << 8);
+
+    std::vector<uint8_t> payload(data + 8, data + 8 + length);
+
+    ESP_LOGI(TAG, "Received frame: stream_id=%lu flags=0x%04x length=%d",
+             (unsigned long)stream_id, flags, length);
+
+    // Parse request (FLAG_SYN | FLAG_FIN)
+    if ((flags & FLAG_SYN) && (flags & FLAG_FIN)) {
+        // Parse JSON request
+        std::string json_str(payload.begin(), payload.end());
+
+        cJSON* req_json = cJSON_Parse(json_str.c_str());
+        if (!req_json) {
+            ESP_LOGE(TAG, "Failed to parse request JSON");
+            return;
+        }
+
+        ESP_LOGI(TAG, "Request: %s", json_str.c_str());
+
+        // Build httpd_req_t
+        httpd_req_t req = {};
+        auto aux = new httpd_req_aux();
+
+        aux->stream_id = stream_id;
+        aux->session = shared_from_this();
+
+        cJSON* method_item = cJSON_GetObjectItem(req_json, "method");
+        cJSON* pathname_item = cJSON_GetObjectItem(req_json, "pathname");
+
+        if (method_item && cJSON_IsString(method_item)) {
+            aux->method_str = method_item->valuestring;
+        }
+        if (pathname_item && cJSON_IsString(pathname_item)) {
+            aux->uri_str = pathname_item->valuestring;
+        }
+
+        // Set method
+        if (aux->method_str == "GET") req.method = HTTP_GET;
+        else if (aux->method_str == "POST") req.method = HTTP_POST;
+        else if (aux->method_str == "PUT") req.method = HTTP_PUT;
+        else if (aux->method_str == "DELETE") req.method = HTTP_DELETE;
+        else req.method = HTTP_GET;
+
+        // Copy URI (cast away const since we're constructing the request ourselves)
+        char* uri_ptr = const_cast<char*>(req.uri);
+        strncpy(uri_ptr, aux->uri_str.c_str(), sizeof(req.uri) - 1);
+        uri_ptr[sizeof(req.uri) - 1] = '\0';
+
+        req.aux = aux;
+        req.content_len = 0;  // TODO: parse body
+
+        cJSON_Delete(req_json);
+
+        // Find and call handler
+        const httpd_uri_t* handler = findHandler(req.uri, (httpd_method_t)req.method);
+        if (handler) {
+            req.user_ctx = handler->user_ctx;
+            esp_err_t result = handler->handler(&req);
+            if (result != ESP_OK) {
+                ESP_LOGE(TAG, "Handler returned error: %d", result);
+            }
+        } else {
+            ESP_LOGE(TAG, "No handler found for: %s", req.uri);
+            // Send 404
+            httpd_resp_send_err(&req, HTTPD_404_NOT_FOUND, "Not Found");
+        }
+
+        // Cleanup
+        delete aux;
+    }
+}
+
+//=============================================================================
+// WebRTCServer Implementation
+//=============================================================================
+
+WebRTCServer::WebRTCServer(const std::string& uid, const std::string& server_url)
+    : uid_(uid), server_url_(server_url) {
+    ESP_LOGI(TAG, "WebRTCServer created for UID: %s", uid.c_str());
+}
+
+WebRTCServer::~WebRTCServer() {
+    stop();
+}
+
+void WebRTCServer::websocketEventHandler(void* handler_args, esp_event_base_t base,
+                                          int32_t event_id, void* event_data) {
+    WebRTCServer* server = static_cast<WebRTCServer*>(handler_args);
+    esp_websocket_event_data_t* data = static_cast<esp_websocket_event_data_t*>(event_data);
+
+    switch (event_id) {
+        case WEBSOCKET_EVENT_CONNECTED:
+            ESP_LOGI(TAG, "WebSocket connected to signaling server");
+            break;
+
+        case WEBSOCKET_EVENT_DISCONNECTED:
+            ESP_LOGI(TAG, "WebSocket disconnected");
+            // TODO: Implement reconnection if needed
+            break;
+
+        case WEBSOCKET_EVENT_DATA:
+            if (data->op_code == 0x01 && data->data_len > 0) {  // Text frame
+                // Append received data to buffer
+                server->ws_message_buffer_.append((char*)data->data_ptr, data->data_len);
+
+                // Check if we have a complete JSON message
+                bool is_complete = false;
+                if (!server->ws_message_buffer_.empty() &&
+                    server->ws_message_buffer_.front() == '{' &&
+                    server->ws_message_buffer_.back() == '}') {
+                    is_complete = true;
+                }
+
+                if (is_complete) {
+                    ESP_LOGI(TAG, "Received complete WebSocket message (len=%d)",
+                             (int)server->ws_message_buffer_.length());
+                    server->handleWebSocketMessage(server->ws_message_buffer_);
+                    server->ws_message_buffer_.clear();
+                } else {
+                    ESP_LOGD(TAG, "Received WebSocket fragment (len=%d), buffering...",
+                             data->data_len);
+                }
+            }
+            break;
+
+        case WEBSOCKET_EVENT_ERROR:
+            ESP_LOGE(TAG, "WebSocket error");
+            break;
+
+        default:
+            break;
+    }
+}
+
+void WebRTCServer::handleWebSocketMessage(const std::string& message) {
+    cJSON* json = cJSON_Parse(message.c_str());
+    if (!json) {
+        ESP_LOGE(TAG, "Failed to parse signaling message");
+        return;
+    }
+
+    cJSON* type_item = cJSON_GetObjectItem(json, "type");
+    cJSON* client_id_item = cJSON_GetObjectItem(json, "client_id");
+
+    if (!type_item || !cJSON_IsString(type_item)) {
+        cJSON_Delete(json);
+        return;
+    }
+
+    std::string type = type_item->valuestring;
+    std::string client_id = (client_id_item && cJSON_IsString(client_id_item))
+                            ? client_id_item->valuestring : "";
+
+    if (type == "registered") {
+        ESP_LOGI(TAG, "Registered! URL: https://%s/%s", server_url_.c_str(), uid_.c_str());
+    } else if (type == "offer") {
+        cJSON* sdp_item = cJSON_GetObjectItem(json, "sdp");
+        if (sdp_item && cJSON_IsString(sdp_item)) {
+            std::string sdp = sdp_item->valuestring;
+
+            // Handle double-encoded SDP
+            if (sdp.rfind("{\"type\":\"offer\"", 0) == 0) {
+                cJSON* sub_json = cJSON_Parse(sdp.c_str());
+                if (sub_json) {
+                    cJSON* inner_sdp = cJSON_GetObjectItem(sub_json, "sdp");
+                    if (inner_sdp && cJSON_IsString(inner_sdp)) {
+                        sdp = inner_sdp->valuestring;
+                    }
+                    cJSON_Delete(sub_json);
+                }
+            }
+
+            handleOffer(client_id, sdp);
+        }
+    } else if (type == "candidate") {
+        cJSON* cand_item = cJSON_GetObjectItem(json, "candidate");
+        if (cand_item) {
+            cJSON* cand_str_item = cJSON_GetObjectItem(cand_item, "candidate");
+            cJSON* mid_item = cJSON_GetObjectItem(cand_item, "sdpMid");
+
+            if (cand_str_item && cJSON_IsString(cand_str_item) &&
+                mid_item && cJSON_IsString(mid_item)) {
+                std::string candidate = cand_str_item->valuestring;
+                std::string mid = mid_item->valuestring;
+
+                // Remove "candidate:" prefix if present
+                if (candidate.rfind("candidate:", 0) == 0) {
+                    candidate = candidate.substr(10);
+                }
+
+                handleCandidate(client_id, candidate, mid);
+            }
+        }
+    }
+
+    cJSON_Delete(json);
+}
+
+void WebRTCServer::handleOffer(const std::string& client_id, const std::string& sdp) {
+    ESP_LOGI(TAG, "Received offer from client: %s", client_id.c_str());
+
+    // Create PeerConnection with ICE servers
+    Configuration config;
+    config.iceServers.emplace_back("stun:stun.l.google.com:19302");
+    // Add TURN servers if needed
+    // config.iceServers.emplace_back("turn:...", port, "user", "pass", IceServer::RelayType::TurnUdp);
+
+    auto pc = std::make_shared<PeerConnection>(config);
+
+    // Store PeerConnection for later candidate additions
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        peer_connections_[client_id] = pc;
+    }
+
+    // Handle ICE candidates
+    pc->onLocalCandidate([this, client_id](Candidate candidate) {
+        ESP_LOGI(TAG, "New local candidate");
+
+        cJSON* msg = cJSON_CreateObject();
+        cJSON_AddStringToObject(msg, "type", "candidate");
+        cJSON_AddStringToObject(msg, "client_id", client_id.c_str());
+
+        cJSON* cand_obj = cJSON_CreateObject();
+        std::string cand_str = "candidate:" + candidate.candidate();
+        cJSON_AddStringToObject(cand_obj, "candidate", cand_str.c_str());
+        cJSON_AddStringToObject(cand_obj, "sdpMid", candidate.mid().c_str());
+        cJSON_AddNumberToObject(cand_obj, "sdpMLineIndex", 0);
+        cJSON_AddItemToObject(msg, "candidate", cand_obj);
+
+        char* msg_str = cJSON_PrintUnformatted(msg);
+        if (msg_str) {
+            sendSignalingMessage(msg_str);
+            free(msg_str);
+        }
+        cJSON_Delete(msg);
+    });
+
+    // Handle local description (send answer)
+    pc->onLocalDescription([this, client_id](Description description) {
+        ESP_LOGI(TAG, "Local Description Ready (Answer)");
+
+        cJSON* msg = cJSON_CreateObject();
+        cJSON_AddStringToObject(msg, "type", "answer");
+        cJSON_AddStringToObject(msg, "sdp", std::string(description).c_str());
+        cJSON_AddStringToObject(msg, "client_id", client_id.c_str());
+
+        char* msg_str = cJSON_PrintUnformatted(msg);
+        if (msg_str) {
+            sendSignalingMessage(msg_str);
+            free(msg_str);
+        }
+        cJSON_Delete(msg);
+    });
+
+    // Handle DataChannel
+    pc->onDataChannel([this, client_id, pc](std::shared_ptr<DataChannel> dc) {
+        ESP_LOGI(TAG, "DataChannel opened for client: %s", client_id.c_str());
+
+        auto session = std::make_shared<WebRTCSession>(client_id, pc, dc);
+
+        dc->onMessage([session](std::variant<rtc::binary, std::string> data) {
+            if (std::holds_alternative<rtc::binary>(data)) {
+                session->handleSwspFrame(std::get<rtc::binary>(data));
+            }
+        });
+
+        dc->onClosed([this, client_id]() {
+            ESP_LOGI(TAG, "DataChannel closed for client: %s", client_id.c_str());
+            removeSession(client_id);
+        });
+
+        addSession(client_id, session);
+    });
+
+    // Set remote description (this triggers answer creation)
+    pc->setRemoteDescription(Description(sdp, "offer"));
+}
+
+void WebRTCServer::handleCandidate(const std::string& client_id, const std::string& candidate,
+                                    const std::string& mid) {
+    ESP_LOGI(TAG, "Received candidate from client: %s", client_id.c_str());
+
+    std::shared_ptr<PeerConnection> pc;
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        auto it = peer_connections_.find(client_id);
+        if (it == peer_connections_.end()) {
+            ESP_LOGE(TAG, "No PeerConnection found for client: %s", client_id.c_str());
+            return;
+        }
+        pc = it->second;
+    }
+
+    try {
+        pc->addRemoteCandidate(Candidate(candidate, mid));
+        ESP_LOGI(TAG, "Added remote candidate");
+    } catch (const std::exception& e) {
+        ESP_LOGE(TAG, "Failed to add candidate: %s", e.what());
+    }
+}
+
+void WebRTCServer::sendSignalingMessage(const std::string& message) {
+    if (!ws_client_ || !esp_websocket_client_is_connected(ws_client_)) {
+        ESP_LOGE(TAG, "WebSocket not connected");
+        return;
+    }
+
+    ESP_LOGI(TAG, "Sending signaling message, len=%d", (int)message.length());
+    int ret = esp_websocket_client_send_text(ws_client_, message.c_str(), message.length(), portMAX_DELAY);
+    if (ret < 0) {
+        ESP_LOGE(TAG, "Failed to send signaling message, ret=%d", ret);
+    }
+}
+
+void WebRTCServer::addSession(const std::string& client_id, std::shared_ptr<WebRTCSession> session) {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    if (sessions_.size() >= MAX_SESSIONS) {
+        ESP_LOGE(TAG, "Max sessions reached, rejecting client: %s", client_id.c_str());
+        return;
+    }
+    sessions_[client_id] = session;
+    session->setHandlers(&uri_handlers_);
+    ESP_LOGI(TAG, "Session added: %s (total: %d)", client_id.c_str(), (int)sessions_.size());
+}
+
+void WebRTCServer::removeSession(const std::string& client_id) {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    auto it = sessions_.find(client_id);
+    if (it != sessions_.end()) {
+        sessions_.erase(it);
+        ESP_LOGI(TAG, "Session removed: %s (total: %d)", client_id.c_str(), (int)sessions_.size());
+    }
+    // Also remove PeerConnection
+    auto pc_it = peer_connections_.find(client_id);
+    if (pc_it != peer_connections_.end()) {
+        peer_connections_.erase(pc_it);
+    }
+}
+
+std::shared_ptr<WebRTCSession> WebRTCServer::getSession(const std::string& client_id) {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    auto it = sessions_.find(client_id);
+    return (it != sessions_.end()) ? it->second : nullptr;
+}
+
+esp_err_t WebRTCServer::registerHandler(const httpd_uri_t* uri_handler) {
+    if (!uri_handler) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Check for duplicates
+    for (const auto& h : uri_handlers_) {
+        if (strcmp(h.uri, uri_handler->uri) == 0 && h.method == uri_handler->method) {
+            return ESP_ERR_HTTPD_HANDLER_EXISTS;
+        }
+    }
+
+    uri_handlers_.push_back(*uri_handler);
+    ESP_LOGI(TAG, "Registered handler: %s", uri_handler->uri);
+    return ESP_OK;
+}
+
+void WebRTCServer::start() {
+    ESP_LOGI(TAG, "Starting WebRTCServer...");
+
+    running_ = true;
+
+    // Build WebSocket URL
+    std::string ws_url = "wss://" + server_url_ + "/ws/device/" + uid_;
+
+    esp_websocket_client_config_t websocket_cfg = {};
+    websocket_cfg.uri = ws_url.c_str();
+    websocket_cfg.task_stack = 32768;  // 32KB stack for PeerConnection creation
+    websocket_cfg.buffer_size = 4096;
+
+    // TLS configuration for secure WebSocket (WSS)
+    // Use ESP-IDF's certificate bundle for CA verification
+    websocket_cfg.crt_bundle_attach = esp_crt_bundle_attach;
+
+    ESP_LOGI(TAG, "Connecting to: %s", ws_url.c_str());
+
+    ws_client_ = esp_websocket_client_init(&websocket_cfg);
+    if (!ws_client_) {
+        ESP_LOGE(TAG, "Failed to initialize WebSocket client");
+        return;
+    }
+
+    esp_websocket_register_events(ws_client_, WEBSOCKET_EVENT_ANY, websocketEventHandler, this);
+    esp_websocket_client_start(ws_client_);
+}
+
+void WebRTCServer::stop() {
+    ESP_LOGI(TAG, "Stopping WebRTCServer...");
+
+    running_ = false;
+
+    // Close all sessions
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        sessions_.clear();
+        peer_connections_.clear();
+    }
+
+    // Close WebSocket
+    if (ws_client_) {
+        esp_websocket_client_stop(ws_client_);
+        esp_websocket_client_destroy(ws_client_);
+        ws_client_ = nullptr;
+    }
+}
+
+//=============================================================================
+// C API Implementation for httpd_resp_* functions
+// These provide WebRTC DataChannel transport while maintaining ESP-IDF API
+//=============================================================================
+
+// Server context for httpd_handle_t
+struct httpd_server_context {
+    WebRTCServer* server;
+};
+
+extern "C" {
+
+esp_err_t httpd_start(httpd_handle_t *handle, const httpd_config_t *config) {
+    if (!handle || !config) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Get UID from environment or use default
+    const char* uid_env = getenv("DEVICE_UID");
+    std::string uid = uid_env ? uid_env : "0123456789";
+
+    // Get server URL from environment or use default
+    const char* server_env = getenv("PSI_SERVER");
+    std::string server_url = server_env ? server_env : "psi.vizycam.com";
+
+    auto ctx = new httpd_server_context();
+    ctx->server = new WebRTCServer(uid, server_url);
+    ctx->server->start();
+
+    *handle = (httpd_handle_t)ctx;
+    return ESP_OK;
+}
+
+esp_err_t httpd_stop(httpd_handle_t handle) {
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    auto ctx = (httpd_server_context*)handle;
+    ctx->server->stop();
+    delete ctx->server;
+    delete ctx;
+
+    return ESP_OK;
+}
+
+esp_err_t httpd_register_uri_handler(httpd_handle_t handle, const httpd_uri_t *uri_handler) {
+    if (!handle || !uri_handler) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    auto ctx = (httpd_server_context*)handle;
+    return ctx->server->registerHandler(uri_handler);
+}
+
+esp_err_t httpd_unregister_uri_handler(httpd_handle_t handle, const char *uri, httpd_method_t method) {
+    // TODO: implement
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t httpd_resp_send(httpd_req_t *r, const char *buf, ssize_t buf_len) {
+    if (!r || !r->aux) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    auto aux = static_cast<httpd_req_aux*>(r->aux);
+
+    // Handle HTTPD_RESP_USE_STRLEN
+    size_t actual_len = (buf_len == HTTPD_RESP_USE_STRLEN) ? strlen(buf) : buf_len;
+
+    // Build metadata JSON
+    cJSON* metadata = cJSON_CreateObject();
+    cJSON_AddNumberToObject(metadata, "status", aux->status_code);
+
+    cJSON* headers = cJSON_CreateObject();
+    cJSON_AddStringToObject(headers, "Content-Type", aux->content_type.c_str());
+    cJSON_AddStringToObject(headers, "Content-Length", std::to_string(actual_len).c_str());
+
+    // Add custom headers
+    for (const auto& [key, value] : aux->response_headers) {
+        cJSON_AddStringToObject(headers, key.c_str(), value.c_str());
+    }
+    cJSON_AddItemToObject(metadata, "headers", headers);
+
+    char* metadata_str = cJSON_PrintUnformatted(metadata);
+    if (metadata_str) {
+        // Send metadata frame
+        aux->session->sendSwspFrame(aux->stream_id, FLAG_SYN, std::string(metadata_str));
+        free(metadata_str);
+    }
+    cJSON_Delete(metadata);
+
+    // Send body in chunks (max 65535 bytes per frame due to uint16_t length field)
+    const size_t MAX_CHUNK_SIZE = 65535;
+    size_t offset = 0;
+
+    while (offset < actual_len) {
+        size_t chunk_size = std::min(MAX_CHUNK_SIZE, actual_len - offset);
+        std::vector<uint8_t> chunk_data(buf + offset, buf + offset + chunk_size);
+
+        // Last chunk gets FLAG_FIN, others get no flags
+        uint16_t flags = (offset + chunk_size >= actual_len) ? FLAG_FIN : 0;
+        aux->session->sendSwspFrame(aux->stream_id, flags, chunk_data);
+
+        offset += chunk_size;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t httpd_resp_send_chunk(httpd_req_t *r, const char *buf, ssize_t buf_len) {
+    if (!r || !r->aux) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    auto aux = static_cast<httpd_req_aux*>(r->aux);
+
+    // First call: send metadata if not sent yet
+    if (!aux->headers_sent) {
+        cJSON* metadata = cJSON_CreateObject();
+        cJSON_AddNumberToObject(metadata, "status", aux->status_code);
+
+        cJSON* headers = cJSON_CreateObject();
+        cJSON_AddStringToObject(headers, "Content-Type", aux->content_type.c_str());
+        // Note: No Content-Length for chunked responses
+
+        for (const auto& [key, value] : aux->response_headers) {
+            cJSON_AddStringToObject(headers, key.c_str(), value.c_str());
+        }
+        cJSON_AddItemToObject(metadata, "headers", headers);
+
+        char* metadata_str = cJSON_PrintUnformatted(metadata);
+        if (metadata_str) {
+            aux->session->sendSwspFrame(aux->stream_id, FLAG_SYN, std::string(metadata_str));
+            free(metadata_str);
+        }
+        cJSON_Delete(metadata);
+        aux->headers_sent = true;
+    }
+
+    // NULL or 0 length = end of chunks
+    if (!buf || buf_len == 0) {
+        std::vector<uint8_t> empty;
+        aux->session->sendSwspFrame(aux->stream_id, FLAG_FIN, empty);
+        return ESP_OK;
+    }
+
+    // Handle HTTPD_RESP_USE_STRLEN
+    size_t actual_len = (buf_len == HTTPD_RESP_USE_STRLEN) ? strlen(buf) : buf_len;
+
+    // Send data in chunks
+    const size_t MAX_CHUNK_SIZE = 65535;
+    size_t offset = 0;
+
+    while (offset < actual_len) {
+        size_t chunk_size = std::min(MAX_CHUNK_SIZE, actual_len - offset);
+        std::vector<uint8_t> chunk_data(buf + offset, buf + offset + chunk_size);
+
+        // Send chunk with no flags (not FIN yet)
+        aux->session->sendSwspFrame(aux->stream_id, 0, chunk_data);
+
+        offset += chunk_size;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t httpd_resp_set_status(httpd_req_t *r, const char *status) {
+    if (!r || !r->aux || !status) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    auto aux = static_cast<httpd_req_aux*>(r->aux);
+    aux->status_str = status;
+    aux->status_code = atoi(status);
+
+    return ESP_OK;
+}
+
+esp_err_t httpd_resp_set_type(httpd_req_t *r, const char *type) {
+    if (!r || !r->aux || !type) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    auto aux = static_cast<httpd_req_aux*>(r->aux);
+    aux->content_type = type;
+
+    return ESP_OK;
+}
+
+esp_err_t httpd_resp_set_hdr(httpd_req_t *r, const char *field, const char *value) {
+    if (!r || !r->aux || !field || !value) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    auto aux = static_cast<httpd_req_aux*>(r->aux);
+    aux->response_headers[field] = value;
+
+    return ESP_OK;
+}
+
+esp_err_t httpd_resp_send_err(httpd_req_t *r, httpd_err_code_t error, const char *msg) {
+    if (!r) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    const char* status_map[] = {
+        "500 Internal Server Error",
+        "501 Not Implemented",
+        "505 Version Not Supported",
+        "400 Bad Request",
+        "401 Unauthorized",
+        "403 Forbidden",
+        "404 Not Found",
+        "405 Method Not Allowed",
+        "408 Request Timeout",
+        "411 Length Required",
+        "413 Content Too Large",
+        "414 URI Too Long",
+        "431 Request Header Fields Too Large"
+    };
+
+    const char* status = (error < HTTPD_ERR_CODE_MAX) ? status_map[error] : "500 Internal Server Error";
+
+    httpd_resp_set_status(r, status);
+    httpd_resp_set_type(r, "text/plain");
+
+    const char* error_msg = msg ? msg : status;
+    return httpd_resp_send(r, error_msg, strlen(error_msg));
+}
+
+// Stub implementations for other ESP-IDF httpd functions
+size_t httpd_req_get_hdr_value_len(httpd_req_t *r, const char *field) {
+    if (!r || !r->aux || !field) {
+        return 0;
+    }
+    auto aux = static_cast<httpd_req_aux*>(r->aux);
+    auto it = aux->headers.find(field);
+    if (it != aux->headers.end()) {
+        return it->second.length();
+    }
+    return 0;
+}
+
+esp_err_t httpd_req_get_hdr_value_str(httpd_req_t *r, const char *field, char *val, size_t val_size) {
+    if (!r || !r->aux || !field || !val) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    auto aux = static_cast<httpd_req_aux*>(r->aux);
+    auto it = aux->headers.find(field);
+    if (it != aux->headers.end()) {
+        strncpy(val, it->second.c_str(), val_size - 1);
+        val[val_size - 1] = '\0';
+        return ESP_OK;
+    }
+    return ESP_ERR_NOT_FOUND;
+}
+
+size_t httpd_req_get_url_query_len(httpd_req_t *r) {
+    // TODO: implement query string parsing
+    return 0;
+}
+
+esp_err_t httpd_req_get_url_query_str(httpd_req_t *r, char *buf, size_t buf_len) {
+    // TODO: implement query string parsing
+    return ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t httpd_query_key_value(const char *qry, const char *key, char *val, size_t val_size) {
+    // TODO: implement query string parsing
+    return ESP_ERR_NOT_FOUND;
+}
+
+int httpd_req_recv(httpd_req_t *r, char *buf, size_t buf_len) {
+    if (!r || !r->aux || !buf) {
+        return -1;
+    }
+    auto aux = static_cast<httpd_req_aux*>(r->aux);
+    size_t copy_len = std::min(buf_len, aux->body.size());
+    if (copy_len > 0) {
+        memcpy(buf, aux->body.data(), copy_len);
+    }
+    return (int)copy_len;
+}
+
+} // extern "C"
