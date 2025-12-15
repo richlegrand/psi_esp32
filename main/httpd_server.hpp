@@ -17,6 +17,10 @@
 #include "rtc/rtc.hpp"
 #include "esp_http_server.h"
 #include "esp_websocket_client.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "freertos/queue.h"
+#include "freertos/semphr.h"
 
 #include <string>
 #include <vector>
@@ -32,6 +36,7 @@ const uint16_t FLAG_FIN = 0x0004;  // Final frame
 // Forward declarations
 class WebRTCSession;
 class WebRTCServer;
+class HandlerDispatcher;
 
 //=============================================================================
 // Internal Context Structure (stored in httpd_req_t.aux)
@@ -151,6 +156,57 @@ private:
     void handleCandidate(const std::string& client_id, const std::string& candidate,
                          const std::string& mid);
     void sendSignalingMessage(const std::string& message);
+};
+
+//=============================================================================
+// Handler Dispatcher - Executes HTTP handlers on Internal RAM stack
+//=============================================================================
+//
+// Problem: WebRTC DataChannel callbacks execute in libdatachannel ThreadPool
+// worker threads, which have PSRAM stacks (configured by esp32_configure_pthread_psram).
+// File I/O operations (open/read from LittleFS) disable the cache, making PSRAM
+// inaccessible. If the stack is in PSRAM, this triggers an assertion:
+// "esp_task_stack_is_sane_cache_disabled()"
+//
+// Solution: Dispatch HTTP handler execution to a dedicated FreeRTOS task with
+// an Internal RAM stack. This task safely performs file I/O operations.
+//
+class HandlerDispatcher {
+public:
+    // Singleton access
+    static HandlerDispatcher& Instance() {
+        static HandlerDispatcher instance;
+        return instance;
+    }
+
+    // Delete copy/move for singleton
+    HandlerDispatcher(const HandlerDispatcher&) = delete;
+    HandlerDispatcher& operator=(const HandlerDispatcher&) = delete;
+
+    // Initialize the dispatcher task (call once at startup)
+    void initialize();
+
+    // Execute a handler on the Internal RAM task
+    // Blocks until handler completes and returns the result
+    esp_err_t executeHandler(httpd_req_t* req, const httpd_uri_t* handler);
+
+private:
+    HandlerDispatcher() = default;
+    ~HandlerDispatcher() = default;
+
+    struct HandlerRequest {
+        httpd_req_t* req;
+        const httpd_uri_t* handler;
+        SemaphoreHandle_t completion_sem;
+        esp_err_t result;
+    };
+
+    QueueHandle_t request_queue_ = nullptr;
+    TaskHandle_t handler_task_ = nullptr;
+    bool initialized_ = false;
+
+    static void handlerTaskEntry(void* arg);
+    void handlerTaskLoop();
 };
 
 #endif // HTTPD_SERVER_HPP

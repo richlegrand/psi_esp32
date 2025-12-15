@@ -259,10 +259,11 @@ extern "C" void app_main(void) {
 
     // Main loop - monitor heap
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
         size_t free_heap = esp_get_free_heap_size();
         size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         ESP_LOGI(TAG, "Heap: %lu KB free | Internal: %lu KB",
                  free_heap / 1024, free_internal / 1024);
+        print_alloc_stats();
     }
 }

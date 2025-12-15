@@ -15,6 +15,11 @@ extern "C" {
 // Called automatically during rtc::StartNetworking() - applications should not call directly
 void esp32_configure_pthread_psram(void);
 
+// Ensure pthread is configured for PSRAM in the current thread/task
+// This is idempotent - safe to call multiple times, from any thread
+// Call this before spawning std::thread from non-pthread contexts (e.g., FreeRTOS tasks)
+void esp32_ensure_pthread_psram(void);
+
 // Enable PSRAM as default malloc target (call after PSRAM is initialized in app_main)
 // Before this is called, malloc uses INTERNAL RAM (safe for early boot)
 void enable_psram_malloc(void);

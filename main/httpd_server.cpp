@@ -142,11 +142,14 @@ void WebRTCSession::handleSwspFrame(const rtc::binary& frame_data) {
 
         cJSON_Delete(req_json);
 
-        // Find and call handler
+        // Find and dispatch handler to Internal RAM task
         const httpd_uri_t* handler = findHandler(req.uri, (httpd_method_t)req.method);
         if (handler) {
             req.user_ctx = handler->user_ctx;
-            esp_err_t result = handler->handler(&req);
+
+            // CRITICAL: Execute handler on Internal RAM task to allow file I/O
+            // The current thread (libdatachannel ThreadPool worker) has PSRAM stack
+            esp_err_t result = HandlerDispatcher::Instance().executeHandler(&req, handler);
             if (result != ESP_OK) {
                 ESP_LOGE(TAG, "Handler returned error: %d", result);
             }
@@ -454,6 +457,9 @@ esp_err_t WebRTCServer::registerHandler(const httpd_uri_t* uri_handler) {
 
 void WebRTCServer::start() {
     ESP_LOGI(TAG, "Starting WebRTCServer...");
+
+    // Initialize handler dispatcher with Internal RAM stack (for file I/O)
+    HandlerDispatcher::Instance().initialize();
 
     running_ = true;
 
@@ -787,3 +793,109 @@ int httpd_req_recv(httpd_req_t *r, char *buf, size_t buf_len) {
 }
 
 } // extern "C"
+
+//=============================================================================
+// Handler Dispatcher Implementation
+//=============================================================================
+
+void HandlerDispatcher::initialize() {
+    if (initialized_) {
+        ESP_LOGW(TAG, "HandlerDispatcher already initialized");
+        return;
+    }
+
+    // Create request queue (depth of 4 allows some pipelining)
+    request_queue_ = xQueueCreate(4, sizeof(HandlerRequest*));
+    if (!request_queue_) {
+        ESP_LOGE(TAG, "Failed to create handler dispatcher queue");
+        return;
+    }
+
+    // Create handler task with Internal RAM stack
+    // Stack size: 16KB should be sufficient for file I/O operations
+    // Priority: 5 (same as WebSocket task) for responsive HTTP handling
+    // Core: 0 (can run on any core)
+    BaseType_t ret = xTaskCreate(
+        handlerTaskEntry,
+        "http_handler",
+        16384,  // 16KB stack in Internal RAM
+        this,
+        5,      // Priority
+        &handler_task_
+    );
+
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create handler dispatcher task");
+        vQueueDelete(request_queue_);
+        request_queue_ = nullptr;
+        return;
+    }
+
+    initialized_ = true;
+    ESP_LOGI(TAG, "Handler dispatcher initialized (16KB Internal RAM stack)");
+}
+
+void HandlerDispatcher::handlerTaskEntry(void* arg) {
+    HandlerDispatcher* self = static_cast<HandlerDispatcher*>(arg);
+    self->handlerTaskLoop();
+}
+
+void HandlerDispatcher::handlerTaskLoop() {
+    ESP_LOGI(TAG, "Handler dispatcher task started");
+
+    while (true) {
+        HandlerRequest* req = nullptr;
+
+        // Wait for handler request
+        if (xQueueReceive(request_queue_, &req, portMAX_DELAY) == pdTRUE && req) {
+            // Execute the handler
+            req->result = req->handler->handler(req->req);
+
+            // Signal completion
+            xSemaphoreGive(req->completion_sem);
+        }
+    }
+}
+
+esp_err_t HandlerDispatcher::executeHandler(httpd_req_t* req, const httpd_uri_t* handler) {
+    if (!initialized_ || !request_queue_) {
+        ESP_LOGE(TAG, "Handler dispatcher not initialized");
+        return ESP_FAIL;
+    }
+
+    // Create completion semaphore
+    SemaphoreHandle_t completion_sem = xSemaphoreCreateBinary();
+    if (!completion_sem) {
+        ESP_LOGE(TAG, "Failed to create completion semaphore");
+        return ESP_FAIL;
+    }
+
+    // Create request
+    HandlerRequest request = {
+        .req = req,
+        .handler = handler,
+        .completion_sem = completion_sem,
+        .result = ESP_FAIL
+    };
+
+    HandlerRequest* req_ptr = &request;
+
+    // Send to dispatcher task
+    if (xQueueSend(request_queue_, &req_ptr, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to queue handler request (timeout)");
+        vSemaphoreDelete(completion_sem);
+        return ESP_FAIL;
+    }
+
+    // Wait for completion (timeout after 30 seconds for large file transfers)
+    if (xSemaphoreTake(completion_sem, pdMS_TO_TICKS(30000)) != pdTRUE) {
+        ESP_LOGE(TAG, "Handler execution timeout");
+        vSemaphoreDelete(completion_sem);
+        return ESP_FAIL;
+    }
+
+    esp_err_t result = request.result;
+    vSemaphoreDelete(completion_sem);
+
+    return result;
+}

@@ -23,12 +23,20 @@
 #include "dtlssrtptransport.hpp"
 #endif
 
+#ifdef ESP_PLATFORM
+#include "esp32_psram_init.h"
+#endif
+
 #include <algorithm>
 #include <array>
 #include <iomanip>
 #include <set>
 #include <sstream>
 #include <thread>
+
+#ifdef ESP_PLATFORM
+#include "esp_heap_caps.h"
+#endif
 
 using namespace std::placeholders;
 
@@ -1169,8 +1177,15 @@ void PeerConnection::processRemoteCandidate(Candidate candidate) {
 	if (candidate.isResolved()) {
 		iceTransport->addRemoteCandidate(std::move(candidate));
 	} else {
-		// We might need a lookup, do it asynchronously
-		// We don't use the thread pool because we have no control on the timeout
+		// Spawn a thread to resolve the candidate asynchronously with DNS lookup
+		// We don't use ThreadPool because getaddrinfo() can hang for 30-60s,
+		// which would block ThreadPool workers and prevent other tasks from running
+#ifdef ESP_PLATFORM
+		// ESP32: Ensure pthread config is set so thread stack uses PSRAM, not Internal RAM
+		// This is needed when called from FreeRTOS tasks (e.g., esp_event task) that
+		// don't have pthread config set. It's idempotent, so safe to call always.
+		esp32_ensure_pthread_psram();
+#endif
 		if ((iceTransport = std::atomic_load(&mIceTransport))) {
 			weak_ptr<IceTransport> weakIceTransport{iceTransport};
 			std::thread t([weakIceTransport, candidate = std::move(candidate)]() mutable {

@@ -315,6 +315,33 @@ extern "C" void esp32_configure_pthread_psram(void) {
     }
 }
 
+extern "C" void esp32_ensure_pthread_psram(void) {
+    // Check if pthread config is already set for this task/thread
+    esp_pthread_cfg_t existing_cfg;
+    esp_err_t ret = esp_pthread_get_cfg(&existing_cfg);
+
+    if (ret == ESP_OK) {
+        // Config already set - verify it's using PSRAM
+        if (existing_cfg.stack_alloc_caps & MALLOC_CAP_SPIRAM) {
+            // Already configured correctly
+            return;
+        }
+    }
+
+    // Not configured or using wrong caps - set PSRAM config
+    esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
+    cfg.stack_alloc_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    cfg.stack_size = 32768;  // 32KB
+    cfg.inherit_cfg = true;
+
+    ret = esp_pthread_set_cfg(&cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to ensure pthread PSRAM config: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Set pthread PSRAM config for current task");
+    }
+}
+
 // Helper function to print memory stats
 extern "C" void print_rtc_memory_stats() {
     ESP_LOGI(TAG, "PSRAM free: %d KB, Internal free: %d KB",
