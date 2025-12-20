@@ -256,14 +256,15 @@ extern "C" void app_main(void) {
     }
 
     ESP_LOGI(TAG, "Server started! Access via: https://%s/%s", PSI_SERVER_URL, DEVICE_UID);
+    ESP_LOGI(TAG, "After server start - Internal RAM: %d KB free",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
     // Main loop - monitor heap
     while (true) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(5000));  // Log every 5 seconds
         size_t free_heap = esp_get_free_heap_size();
         size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
         ESP_LOGI(TAG, "Heap: %lu KB free | Internal: %lu KB",
                  free_heap / 1024, free_internal / 1024);
-        print_alloc_stats();
     }
 }

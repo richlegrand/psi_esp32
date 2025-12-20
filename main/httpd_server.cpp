@@ -12,6 +12,7 @@
 #include <cstring>
 #include "esp_log.h"
 #include "esp_crt_bundle.h"
+#include "esp32_psram_init.h"
 
 static const char* TAG = "WebRTC";
 
@@ -179,6 +180,11 @@ WebRTCServer::~WebRTCServer() {
 
 void WebRTCServer::websocketEventHandler(void* handler_args, esp_event_base_t base,
                                           int32_t event_id, void* event_data) {
+    // Configure pthread to use PSRAM for the WebSocket client's task
+    // This ensures PeerConnection creation (which spawns libjuice threads) uses PSRAM stacks
+    // Call this once per event to ensure config is set (it's idempotent)
+    esp32_ensure_pthread_psram();
+
     WebRTCServer* server = static_cast<WebRTCServer*>(handler_args);
     esp_websocket_event_data_t* data = static_cast<esp_websocket_event_data_t*>(event_data);
 
@@ -468,8 +474,11 @@ void WebRTCServer::start() {
 
     esp_websocket_client_config_t websocket_cfg = {};
     websocket_cfg.uri = ws_url.c_str();
-    websocket_cfg.task_stack = 32768;  // 32KB stack for PeerConnection creation
-    websocket_cfg.buffer_size = 4096;
+    // 32KB stack: Required for regex-based SDP parsing in libdatachannel
+    // (complex RFC 3986 URL regex causes deep recursion)
+    // Parent project dispatches SDP parsing to MainThread to avoid this
+    websocket_cfg.task_stack = 32768;
+    websocket_cfg.buffer_size = 2048;  // 2KB buffer
 
     // TLS configuration for secure WebSocket (WSS)
     // Use ESP-IDF's certificate bundle for CA verification
@@ -812,9 +821,10 @@ void HandlerDispatcher::initialize() {
     }
 
     // Create handler task with Internal RAM stack
+    // CRITICAL: Must use Internal RAM because this task does file I/O (LittleFS)
+    // When flash is accessed, cache is disabled, and PSRAM stacks become inaccessible!
     // Stack size: 16KB should be sufficient for file I/O operations
     // Priority: 5 (same as WebSocket task) for responsive HTTP handling
-    // Core: 0 (can run on any core)
     BaseType_t ret = xTaskCreate(
         handlerTaskEntry,
         "http_handler",
