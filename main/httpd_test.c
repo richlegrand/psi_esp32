@@ -19,6 +19,7 @@
 #ifdef ESP_PLATFORM
 #include "esp_log.h"
 #include "esp_heap_caps.h"
+#include "esp_timer.h"
 #define LOG_TAG "httpd_test"
 #define LOGI(fmt, ...) ESP_LOGI(LOG_TAG, fmt, ##__VA_ARGS__)
 #define LOGE(fmt, ...) ESP_LOGE(LOG_TAG, fmt, ##__VA_ARGS__)
@@ -28,6 +29,8 @@
 #define LOGE(fmt, ...) printf("ERROR: " fmt "\n", ##__VA_ARGS__)
 #define FILE_BASE_PATH ".."
 #endif
+
+#define CHUNK_SIZE  0x2000
 
 // Root page handler
 static esp_err_t root_handler(httpd_req_t *req) {
@@ -94,29 +97,31 @@ static esp_err_t image_handler(httpd_req_t *req) {
 
     // Allocate buffer in Internal RAM (required for flash access when stack is in PSRAM)
 #ifdef ESP_PLATFORM
-    char *chunk = heap_caps_malloc(4096, MALLOC_CAP_INTERNAL);
+    char *chunk = heap_caps_malloc(CHUNK_SIZE, MALLOC_CAP_INTERNAL);
     if (!chunk) {
         close(fd);
         LOGE("Failed to allocate buffer in Internal RAM");
         return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
     }
 #else
-    char chunk[4096];
+    char chunk[CHUNK_SIZE];
     char *chunk_ptr = chunk;
 #endif
 
     ssize_t bytes_read;
     esp_err_t result = ESP_OK;
+    int chunk_num = 0;
 
 #ifdef ESP_PLATFORM
-    while ((bytes_read = read(fd, chunk, 4096)) > 0) {
+    while ((bytes_read = read(fd, chunk, CHUNK_SIZE)) > 0) {
 #else
-    while ((bytes_read = read(fd, chunk_ptr, 4096)) > 0) {
+    while ((bytes_read = read(fd, chunk_ptr, CHUNK_SIZE)) > 0) {
 #endif
         if (httpd_resp_send_chunk(req, chunk, bytes_read) != ESP_OK) {
             result = ESP_FAIL;
             break;
         }
+        chunk_num++;
     }
 
     close(fd);

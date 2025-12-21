@@ -267,9 +267,12 @@ extern "C" void app_main(void) {
     // Main loop - monitor heap
     while (true) {
         vTaskDelay(pdMS_TO_TICKS(5000));  // Log every 5 seconds
+
         size_t free_heap = esp_get_free_heap_size();
         size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-        ESP_LOGI(TAG, "Heap: %lu KB free | Internal: %lu KB",
-                 free_heap / 1024, free_internal / 1024);
+        UBaseType_t num_tasks = uxTaskGetNumberOfTasks();
+
+        ESP_LOGI(TAG, "Heap: %lu KB | Internal: %lu KB | Tasks: %u",
+                 free_heap / 1024, free_internal / 1024, num_tasks);
     }
 }

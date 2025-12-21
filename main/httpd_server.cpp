@@ -190,18 +190,11 @@ void WebRTCServer::websocketEventHandler(void* handler_args, esp_event_base_t ba
     esp_websocket_event_data_t* data = static_cast<esp_websocket_event_data_t*>(event_data);
 
     // Log all events for debugging
-    ESP_LOGI(TAG, "WebSocket event: %d", (int)event_id);
+    //ESP_LOGI(TAG, "WebSocket event: %d", (int)event_id);
 
     switch (event_id) {
         case WEBSOCKET_EVENT_CONNECTED:
             ESP_LOGI(TAG, "WebSocket connected to signaling server");
-
-            // Check if client is actually connected
-            if (esp_websocket_client_is_connected(server->ws_client_)) {
-                ESP_LOGI(TAG, "WebSocket client state: CONNECTED (pings should start)");
-            } else {
-                ESP_LOGW(TAG, "WebSocket client state: NOT CONNECTED!");
-            }
             break;
 
         case WEBSOCKET_EVENT_DISCONNECTED:
@@ -501,18 +494,18 @@ void WebRTCServer::start() {
     websocket_cfg.reconnect_timeout_ms = 10000;  // Explicit to suppress warning
     websocket_cfg.network_timeout_ms = 10000;  // Explicit to suppress warning
 
-    // WebSocket keepalive: Send PING every 10 seconds to keep connection alive
+    // WebSocket keepalive: Send PING every 60 seconds (typical production value)
     // This prevents timeout when no signaling messages are being exchanged
     // (after WebRTC connection is established, signaling goes idle)
-    websocket_cfg.ping_interval_sec = 10;
-    websocket_cfg.pingpong_timeout_sec = 30;  // Disconnect if no PONG received within 30s
+    websocket_cfg.ping_interval_sec = 60;
+    websocket_cfg.pingpong_timeout_sec = 120;  // Disconnect if no PONG received within 2 minutes
     websocket_cfg.disable_pingpong_discon = false;  // Enable auto-disconnect on timeout
 
-    // TCP keepalive: Detect dead connections at TCP layer
+    // TCP keepalive: Detect dead connections at TCP layer (typical production values)
     websocket_cfg.keep_alive_enable = true;
-    websocket_cfg.keep_alive_idle = 60;      // Send TCP keepalive after 60s of idle
-    websocket_cfg.keep_alive_interval = 10;  // Retry every 10s
-    websocket_cfg.keep_alive_count = 3;      // 3 retries before considering connection dead
+    websocket_cfg.keep_alive_idle = 300;     // Send TCP keepalive after 5 minutes of idle
+    websocket_cfg.keep_alive_interval = 75;  // Retry every 75s (Linux standard)
+    websocket_cfg.keep_alive_count = 9;      // 9 retries before considering connection dead
 
     // TLS configuration for secure WebSocket (WSS)
     // Use ESP-IDF's certificate bundle for CA verification
