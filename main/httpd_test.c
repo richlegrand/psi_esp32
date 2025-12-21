@@ -49,9 +49,9 @@ static esp_err_t root_handler(httpd_req_t *req) {
         "<p>This is a simple page served by an ESP32 device over WebRTC DataChannel.</p>\n"
         "\n"
         "<h2>Images:</h2>\n"
-        "<img src=\"/static/images/image1.jpg\" alt=\"Image 1\" width=\"300\">\n"
+        "<img src=\"static/images/image1.jpg\" alt=\"Image 1\" width=\"300\">\n"
         "<br>\n"
-        "<img src=\"/static/images/image2.jpg\" alt=\"Image 2\" width=\"300\">\n"
+        "<img src=\"static/images/image2.jpg\" alt=\"Image 2\" width=\"300\">\n"
         "</body>\n"
         "</html>\n";
 
