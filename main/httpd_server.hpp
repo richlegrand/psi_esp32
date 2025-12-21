@@ -17,6 +17,7 @@
 #include "rtc/rtc.hpp"
 #include "esp_http_server.h"
 #include "esp_websocket_client.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"

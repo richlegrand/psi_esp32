@@ -13,6 +13,7 @@
 #include "esp_log.h"
 #include "esp_crt_bundle.h"
 #include "esp32_psram_init.h"
+#include "esp_timer.h"
 
 static const char* TAG = "WebRTC";
 
@@ -188,14 +189,32 @@ void WebRTCServer::websocketEventHandler(void* handler_args, esp_event_base_t ba
     WebRTCServer* server = static_cast<WebRTCServer*>(handler_args);
     esp_websocket_event_data_t* data = static_cast<esp_websocket_event_data_t*>(event_data);
 
+    // Log all events for debugging
+    ESP_LOGI(TAG, "WebSocket event: %d", (int)event_id);
+
     switch (event_id) {
         case WEBSOCKET_EVENT_CONNECTED:
             ESP_LOGI(TAG, "WebSocket connected to signaling server");
+
+            // Check if client is actually connected
+            if (esp_websocket_client_is_connected(server->ws_client_)) {
+                ESP_LOGI(TAG, "WebSocket client state: CONNECTED (pings should start)");
+            } else {
+                ESP_LOGW(TAG, "WebSocket client state: NOT CONNECTED!");
+            }
             break;
 
         case WEBSOCKET_EVENT_DISCONNECTED:
-            ESP_LOGI(TAG, "WebSocket disconnected");
-            // TODO: Implement reconnection if needed
+        case WEBSOCKET_EVENT_CLOSED:
+            ESP_LOGW(TAG, "WebSocket disconnected/closed (event %d)", (int)event_id);
+
+            // Initiate reconnection (built-in will handle retries if it fails)
+            if (server->running_ && server->ws_client_) {
+                ESP_LOGI(TAG, "Attempting to reconnect...");
+                // Brief delay before reconnecting (seems to help connection succeed)
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                esp_websocket_client_start(server->ws_client_);
+            }
             break;
 
         case WEBSOCKET_EVENT_DATA:
@@ -478,7 +497,22 @@ void WebRTCServer::start() {
     // (complex RFC 3986 URL regex causes deep recursion)
     // Parent project dispatches SDP parsing to MainThread to avoid this
     websocket_cfg.task_stack = 32768;
-    websocket_cfg.buffer_size = 2048;  // 2KB buffer
+    websocket_cfg.buffer_size = 4096;  // Increased from 2KB to handle large server headers
+    websocket_cfg.reconnect_timeout_ms = 10000;  // Explicit to suppress warning
+    websocket_cfg.network_timeout_ms = 10000;  // Explicit to suppress warning
+
+    // WebSocket keepalive: Send PING every 10 seconds to keep connection alive
+    // This prevents timeout when no signaling messages are being exchanged
+    // (after WebRTC connection is established, signaling goes idle)
+    websocket_cfg.ping_interval_sec = 10;
+    websocket_cfg.pingpong_timeout_sec = 30;  // Disconnect if no PONG received within 30s
+    websocket_cfg.disable_pingpong_discon = false;  // Enable auto-disconnect on timeout
+
+    // TCP keepalive: Detect dead connections at TCP layer
+    websocket_cfg.keep_alive_enable = true;
+    websocket_cfg.keep_alive_idle = 60;      // Send TCP keepalive after 60s of idle
+    websocket_cfg.keep_alive_interval = 10;  // Retry every 10s
+    websocket_cfg.keep_alive_count = 3;      // 3 retries before considering connection dead
 
     // TLS configuration for secure WebSocket (WSS)
     // Use ESP-IDF's certificate bundle for CA verification
@@ -492,8 +526,14 @@ void WebRTCServer::start() {
         return;
     }
 
+    // Verify ping interval was set correctly
+    size_t ping_interval = esp_websocket_client_get_ping_interval_sec(ws_client_);
+    ESP_LOGI(TAG, "WebSocket client initialized with ping_interval=%d seconds", (int)ping_interval);
+
     esp_websocket_register_events(ws_client_, WEBSOCKET_EVENT_ANY, websocketEventHandler, this);
     esp_websocket_client_start(ws_client_);
+
+    ESP_LOGI(TAG, "WebSocket client started - auto-reconnect on disconnect enabled");
 }
 
 void WebRTCServer::stop() {

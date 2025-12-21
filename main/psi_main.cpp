@@ -179,6 +179,11 @@ static void littlefs_init(void) {
 extern "C" void app_main(void) {
     ESP_LOGI(TAG, "Starting PSI ESP32 WebRTC Server...");
 
+    // Enable verbose logging for WebSocket client to debug ping/pong
+    esp_log_level_set("websocket_client", ESP_LOG_DEBUG);
+    esp_log_level_set("TRANS_TCP", ESP_LOG_DEBUG);
+    esp_log_level_set("WebRTC", ESP_LOG_DEBUG);  // See keepalive heartbeats
+
     // Initialize NVS (required for WiFi)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
