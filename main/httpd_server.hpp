@@ -153,7 +153,8 @@ private:
     void handleWebSocketMessage(const std::string& message);
 
     // Signaling
-    void handleOffer(const std::string& client_id, const std::string& sdp);
+    void handleRequest(const std::string& client_id);
+    void handleAnswer(const std::string& client_id, const std::string& sdp);
     void handleCandidate(const std::string& client_id, const std::string& candidate,
                          const std::string& mid);
     void sendSignalingMessage(const std::string& message);

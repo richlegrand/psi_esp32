@@ -265,13 +265,18 @@ void WebRTCServer::handleWebSocketMessage(const std::string& message) {
 
     if (type == "registered") {
         ESP_LOGI(TAG, "Registered! URL: https://%s/%s", server_url_.c_str(), uid_.c_str());
-    } else if (type == "offer") {
+    } else if (type == "request") {
+        // Browser requests connection - we create the offer
+        ESP_LOGI(TAG, "Received connection request from client: %s", client_id.c_str());
+        handleRequest(client_id);
+    } else if (type == "answer") {
+        // Browser sends answer - we set remote description
         cJSON* sdp_item = cJSON_GetObjectItem(json, "sdp");
         if (sdp_item && cJSON_IsString(sdp_item)) {
             std::string sdp = sdp_item->valuestring;
 
             // Handle double-encoded SDP
-            if (sdp.rfind("{\"type\":\"offer\"", 0) == 0) {
+            if (sdp.rfind("{\"type\":\"answer\"", 0) == 0) {
                 cJSON* sub_json = cJSON_Parse(sdp.c_str());
                 if (sub_json) {
                     cJSON* inner_sdp = cJSON_GetObjectItem(sub_json, "sdp");
@@ -282,7 +287,7 @@ void WebRTCServer::handleWebSocketMessage(const std::string& message) {
                 }
             }
 
-            handleOffer(client_id, sdp);
+            handleAnswer(client_id, sdp);
         }
     } else if (type == "candidate") {
         cJSON* cand_item = cJSON_GetObjectItem(json, "candidate");
@@ -308,8 +313,8 @@ void WebRTCServer::handleWebSocketMessage(const std::string& message) {
     cJSON_Delete(json);
 }
 
-void WebRTCServer::handleOffer(const std::string& client_id, const std::string& sdp) {
-    ESP_LOGI(TAG, "Received offer from client: %s", client_id.c_str());
+void WebRTCServer::handleRequest(const std::string& client_id) {
+    ESP_LOGI(TAG, "Received connection request from client: %s", client_id.c_str());
 
     // Create PeerConnection with ICE servers
     Configuration config;
@@ -348,12 +353,12 @@ void WebRTCServer::handleOffer(const std::string& client_id, const std::string& 
         cJSON_Delete(msg);
     });
 
-    // Handle local description (send answer)
+    // Handle local description (send OFFER, not answer)
     pc->onLocalDescription([this, client_id](Description description) {
-        ESP_LOGI(TAG, "Local Description Ready (Answer)");
+        ESP_LOGI(TAG, "Local Description Ready (Offer)");
 
         cJSON* msg = cJSON_CreateObject();
-        cJSON_AddStringToObject(msg, "type", "answer");
+        cJSON_AddStringToObject(msg, "type", "offer");
         cJSON_AddStringToObject(msg, "sdp", std::string(description).c_str());
         cJSON_AddStringToObject(msg, "client_id", client_id.c_str());
 
@@ -365,8 +370,10 @@ void WebRTCServer::handleOffer(const std::string& client_id, const std::string& 
         cJSON_Delete(msg);
     });
 
-    // Handle DataChannel
-    pc->onDataChannel([this, client_id, pc](std::shared_ptr<DataChannel> dc) {
+    // Create DataChannel (device creates it, not browser)
+    auto dc = pc->createDataChannel("http");
+
+    dc->onOpen([this, client_id, pc, dc]() {
         ESP_LOGI(TAG, "DataChannel opened for client: %s", client_id.c_str());
 
         auto session = std::make_shared<WebRTCSession>(client_id, pc, dc);
@@ -385,8 +392,32 @@ void WebRTCServer::handleOffer(const std::string& client_id, const std::string& 
         addSession(client_id, session);
     });
 
-    // Set remote description (this triggers answer creation)
-    pc->setRemoteDescription(Description(sdp, "offer"));
+    // TODO: Add video track here if video streaming is enabled
+    // Example:
+    // auto video_track = pc->addTrack(video_media);
+    // video_track->setMediaHandler(packetizer);
+
+    // Create offer (no remote description yet)
+    pc->setLocalDescription();
+}
+
+void WebRTCServer::handleAnswer(const std::string& client_id, const std::string& sdp) {
+    ESP_LOGI(TAG, "Received answer from client: %s", client_id.c_str());
+
+    std::shared_ptr<PeerConnection> pc;
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        auto it = peer_connections_.find(client_id);
+        if (it == peer_connections_.end()) {
+            ESP_LOGE(TAG, "No PeerConnection found for client: %s", client_id.c_str());
+            return;
+        }
+        pc = it->second;
+    }
+
+    // Set remote description (browser's answer)
+    pc->setRemoteDescription(Description(sdp, "answer"));
+    ESP_LOGI(TAG, "Remote description set for client: %s", client_id.c_str());
 }
 
 void WebRTCServer::handleCandidate(const std::string& client_id, const std::string& candidate,
