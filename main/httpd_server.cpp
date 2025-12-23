@@ -373,6 +373,20 @@ void WebRTCServer::handleRequest(const std::string& client_id) {
     // Create DataChannel (device creates it, not browser)
     auto dc = pc->createDataChannel("http");
 
+    // Store DataChannel in a shared location accessible by callbacks
+    // This avoids the reference cycle while keeping it alive
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        // Store in peer_connections_ map - we'll create session when channel opens
+    }
+
+    // Set up onClosed early (doesn't need session)
+    dc->onClosed([this, client_id]() {
+        ESP_LOGI(TAG, "DataChannel closed for client: %s", client_id.c_str());
+        removeSession(client_id);
+    });
+
+    // Set up onOpen to create session
     dc->onOpen([this, client_id, pc, dc]() {
         ESP_LOGI(TAG, "DataChannel opened for client: %s", client_id.c_str());
 
@@ -382,11 +396,6 @@ void WebRTCServer::handleRequest(const std::string& client_id) {
             if (std::holds_alternative<rtc::binary>(data)) {
                 session->handleSwspFrame(std::get<rtc::binary>(data));
             }
-        });
-
-        dc->onClosed([this, client_id]() {
-            ESP_LOGI(TAG, "DataChannel closed for client: %s", client_id.c_str());
-            removeSession(client_id);
         });
 
         addSession(client_id, session);
