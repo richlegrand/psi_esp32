@@ -1,0 +1,255 @@
+--- 0x4ff29ed0: esp_bootloader_get_description at /home/rich/pixy3/esp-idf-v5.5.1/components/esp_bootloader_format/esp_bootloader_desc.c:38
+load:0x4ff2cbd0,len:0x38b8
+--- 0x4ff2cbd0: esp_flash_encryption_enabled at /home/rich/pixy3/esp-idf-v5.5.1/components/bootloader_support/src/flash_encrypt.c:87
+entry 0x4ff29ee8
+--- 0x4ff29ee8: call_start_cpu0 at /home/rich/pixy3/esp-idf-v5.5.1/components/bootloader/subproject/main/bootloader_start.c:25
+I (27) boot: ESP-IDF v5.5.1 2nd stage bootloader
+I (28) boot: compile time Dec  8 2025 07:23:33
+I (28) boot: Multicore bootloader
+I (30) boot: chip revision: v1.0
+I (31) boot: efuse block revision: v0.3
+I (34) boot.esp32p4: SPI Speed      : 80MHz
+I (38) boot.esp32p4: SPI Mode       : DIO
+I (42) boot.esp32p4: SPI Flash Size : 16MB
+I (46) boot: Enabling RNG early entropy source...
+I (50) boot: Partition Table:
+I (53) boot: ## Label            Usage          Type ST Offset   Length
+I (59) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (66) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (72) boot:  2 factory          factory app      00 00 00010000 00400000
+I (79) boot:  3 storage          Unknown data     01 82 00410000 00800000
+I (85) boot:  4 coredump         Unknown data     01 03 00c10000 00010000
+I (92) boot: End of partition table
+I (95) esp_image: segment 0: paddr=00010020 vaddr=401a0020 size=bc504h (771332) map
+I (210) esp_image: segment 1: paddr=000cc52c vaddr=30100000 size=00084h (   132) load
+I (212) esp_image: segment 2: paddr=000cc5b8 vaddr=4ff00000 size=03a60h ( 14944) load
+I (218) esp_image: segment 3: paddr=000d0020 vaddr=40000020 size=19c4bch (1688764) map
+I (458) esp_image: segment 4: paddr=0026c4e4 vaddr=4ff03a60 size=10f9ch ( 69532) load
+I (471) esp_image: segment 5: paddr=0027d488 vaddr=4ff14a00 size=02fa8h ( 12200) load
+I (479) boot: Loaded app from partition at offset 0x10000
+I (479) boot: Disabling RNG early entropy source...
+I (492) hex_psram: vendor id    : 0x0d (AP)
+I (492) hex_psram: Latency      : 0x01 (Fixed)
+I (493) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+I (493) hex_psram: dev id       : 0x03 (generation 4)
+I (498) hex_psram: density      : 0x07 (256 Mbit)
+I (502) hex_psram: good-die     : 0x06 (Pass)
+I (506) hex_psram: SRF          : 0x02 (Slow Refresh)
+I (511) hex_psram: BurstType    : 0x00 ( Wrap)
+I (515) hex_psram: BurstLen     : 0x03 (2048 Byte)
+I (520) hex_psram: BitMode      : 0x01 (X16 Mode)
+I (524) hex_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+I (529) hex_psram: DriveStrength: 0x00 (1/1)
+I (533) esp_psram: Found 32MB PSRAM device
+I (537) esp_psram: Speed: 20MHz
+I (540) hex_psram: psram CS IO is dedicated
+I (544) cpu_start: Multicore app
+I (558) cpu_start: Pro cpu start user code
+I (559) cpu_start: cpu freq: 360000000 Hz
+I (559) app_init: Application information:
+I (559) app_init: Project name:     esp32_libdatachannel
+I (564) app_init: App version:      v1.0-local-websocket-3-g8e5984b
+I (570) app_init: Compile time:     Dec 20 2025 11:45:27
+I (575) app_init: ELF file SHA256:  d57220c92...
+I (579) app_init: ESP-IDF:          v5.5.1
+I (583) efuse_init: Min chip rev:     v0.1
+I (587) efuse_init: Max chip rev:     v1.99 
+I (591) efuse_init: Chip rev:         v1.0
+I (594) heap_init: Initializing. RAM available for dynamic allocation:
+I (601) heap_init: At 4FF20E20 len 0001A1A0 (104 KiB): RAM
+I (606) heap_init: At 4FF3AFC0 len 00004BF0 (18 KiB): RAM
+I (611) heap_init: At 4FF40000 len 00060000 (384 KiB): RAM
+I (616) heap_init: At 50108080 len 00007F80 (31 KiB): RTCRAM
+I (622) heap_init: At 30100084 len 00001F7C (7 KiB): TCM
+I (627) esp_psram: Adding pool of 32768K of PSRAM memory to heap allocator
+I (634) spi_flash: detected chip: gd
+I (636) spi_flash: flash io: dio
+I (642) host_init: ESP Hosted : Host chip_ip[18]
+I (644) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+I (652) H_API: ** add_esp_wifi_remote_channels **
+I (658) esp_core_dump_uart: Init core dump to UART
+I (663) H_SDIO_DRV: sdio_data_to_rx_buf_task started
+I (663) main_task: Started on CPU0
+I (673) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+I (673) main_task: Calling app_main()
+I (683) psi_main: Starting PSI ESP32 WebRTC Server...
+I (713) rtc_psram: PSRAM malloc enabled as global default
+I (713) psi_main: Initializing LittleFS
+I (753) psi_main: LittleFS partition size: total: 8192 KB, used: 432 KB
+I (753) psi_main: After LittleFS - Internal RAM: 435 KB free
+I (753) psi_main: Initializing WiFi with ESP-Hosted...
+I (763) transport: Attempt connection with slave: retry[0]
+W (763) H_SDIO_DRV: Reset slave using GPIO[9]
+I (763) os_wrapper_esp: GPIO [9] configured
+I (2293) sdio_wrapper: SDIO master: Slot 1, Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+I (2293) sdio_wrapper: GPIOs: CLK[28] CMD[27] D0[29] D1[30] D2[31] D3[32] Slave_Reset[9]
+I (2293) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+I (2333) sdio_wrapper: Function 0 Blocksize: 512
+I (2333) sdio_wrapper: Function 1 Blocksize: 512
+I (2433) H_SDIO_DRV: Card init success, TRANSPORT_RX_ACTIVE
+I (2433) transport: set_transport_state: 1
+I (2433) transport: Waiting for esp_hosted slave to be ready
+I (2463) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+I (2463) H_SDIO_DRV: Open data path at slave
+I (2463) H_SDIO_DRV: Starting SDIO process rx task
+I (2463) H_SDIO_DRV: Received ESP_PRIV_IF type message
+I (2463) transport: Received INIT event from ESP32 peripheral
+I (2473) transport: EVENT: 12
+I (2473) transport: Identified slave [esp32c6]
+I (2473) transport: EVENT: 11
+I (2483) transport: capabilities: 0xd
+I (2483) transport: Features supported are:
+I (2483) transport:      * WLAN
+I (2493) transport:        - HCI over SDIO
+I (2493) transport:        - BLE only
+I (2493) transport: EVENT: 13
+W (2503) transport: Version mismatch: Host [2.7.0] > Co-proc [0.0.0] ==> Upgrade co-proc to avoid RPC timeouts
+I (2513) transport: ESP board type is : 13 
+
+I (2513) transport: Base transport is set-up, TRANSPORT_TX_ACTIVE
+I (2523) H_API: Transport active
+I (2523) transport: Slave chip Id[12]
+I (2523) transport: raw_tp_dir[-], flow_ctrl: low[60] high[80]
+I (2533) transport: transport_delayed_init
+I (2533) hci_stub_drv: Host BT Support: Disabled
+I (2543) H_SDIO_DRV: Received INIT event
+I (2543) H_SDIO_DRV: Event type: 0x22
+I (2543) H_SDIO_DRV: Write thread started
+I (2663) RPC_WRAP: --- ESP Event: Slave ESP Init ---
+I (2883) psi_main: wifi_init_sta finished.
+I (2883) psi_main: After WiFi init - Internal RAM: 411 KB free
+I (2893) RPC_WRAP: ESP Event: wifi station started
+I (3903) H_API: esp_wifi_remote_connect
+W (3933) rpc_rsp: Hosted RPC_Resp [0x21a], uid [7], resp code [12295]
+I (6533) RPC_WRAP: ESP Event: Station mode: Connected
+I (6533) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x40129868
+--- 0x40129868: wifi_sta_receive at /home/rich/pixy3/esp-idf-v5.5.1/components/esp_wifi/src/wifi_netif.c:38
+I (7553) esp_netif_handlers: sta ip: 192.168.1.118, mask: 255.255.255.0, gw: 192.168.1.1
+I (7553) psi_main: got ip:192.168.1.118
+I (7553) psi_main: IPv6 link-local address creation initiated
+I (7553) psi_main: Connected to AP SSID:psinet
+I (7563) psi_main: Waiting for IPv6 address...
+I (8763) psi_main: Got IPv6 address: fe80:0000:0000:0000:e6b3:23ff:fea6:a5d8
+I (8763) psi_main: IPv6 link-local address acquired
+I (8763) psi_main: Initializing libdatachannel...
+I (8763) rtc_psram: Configured pthread to use PSRAM for thread stacks
+I (8773) psi_main: After libdatachannel init - Internal RAM: 408 KB free
+I (8773) httpd_test: Starting HTTP server...
+I (8783) WebRTC: WebRTCServer created for UID: 0123456789
+I (8783) WebRTC: Starting WebRTCServer...
+I (8793) WebRTC: Handler dispatcher task started
+I (8793) WebRTC: Handler dispatcher initialized (16KB Internal RAM stack)
+I (8803) WebRTC: Connecting to: wss://psi.vizycam.com/ws/device/0123456789
+W (8803) websocket_client: `reconnect_timeout_ms` is not set, or it is less than or equal to zero, using default time out 10000 (milliseconds)
+W (8823) websocket_client: `network_timeout_ms` is not set, or it is less than or equal to zero, using default time out 10000 (milliseconds)
+I (8833) rtc_psram: Set pthread PSRAM config for current task
+I (8843) websocket_client: Started
+I (8843) WebRTC: Registered handler: /
+I (8843) WebRTC: Registered handler: /hello
+I (8843) WebRTC: Registered handler: /static/images/image1.jpg
+I (8853) WebRTC: Registered handler: /static/images/image2.jpg
+I (8853) httpd_test: Server started! Handlers registered.
+I (8863) psi_main: Server started! Access via: https://psi.vizycam.com/0123456789
+I (8873) psi_main: After server start - Internal RAM: 359 KB free
+I (9403) esp-x509-crt-bundle: Certificate validated
+I (9793) WebRTC: WebSocket connected to signaling server
+I (9793) WebRTC: Received complete WebSocket message (len=22)
+I (9793) WebRTC: Registered! URL: https://psi.vizycam.com/0123456789
+I (13873) psi_main: Heap: 32984 KB free | Internal: 328 KB
+I (17363) WebRTC: Received complete WebSocket message (len=644)
+I (17363) WebRTC: Received offer from client: 0123456789_890c14a5
+srtp_init() - starting
+srtp_init() - calling srtp_crypto_kernel_init()
+srtp_crypto_kernel_init() - loading null cipher
+srtp_crypto_kernel_init() - loading aes_icm_128 cipher
+srtp_crypto_kernel_init() - aes_icm_128 returned 0
+srtp_crypto_kernel_init() - loading aes_icm_256 cipher
+srtp_crypto_kernel_init() - aes_icm_256 returned 0
+srtp_init() - srtp_crypto_kernel_init() returned 0
+srtp_init() - calling srtp_crypto_kernel_load_debug_module()
+srtp_init() - srtp_crypto_kernel_load_debug_module() returned 0
+srtp_init() - completed successfully
+1970-01-01 03:36:24.462 INFO  [0] [rtc::impl::IceTransport::IceTransport@113] Using STUN server "stun.l.google.com:19302"
+1970-01-01 03:36:24.466 WARN  [0] [rtc::impl::IceTransport::LogCallback@390] juice: random.c:90: Falling back on rand() for random bytes
+1970-01-01 03:36:24.479 INFO  [0] [rtc::impl::PeerConnection::changeSignalingState@1380] Changed signaling state to have-remote-offer
+I (17613) WebRTC: Local Description Ready (Answer)
+1970-01-01 03:36:24.505 INFO  [0] [rtc::impl::PeerConnection::changeSignalingState@1380] Changed signaling state to stable
+I (17623) WebRTC: Sending signaling message, len=538
+1970-01-01 03:36:24.512 INFO  [0] [rtc::impl::PeerConnection::changeGatheringState@1367] Changed gathering state to in-progress
+1970-01-01 03:36:24.529 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1158: Changing state to gathering
+I (17663) WebRTC: New local candidate
+1970-01-01 03:36:24.550 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1158: Changing state to connecting
+I (17663) WebRTC: Sending signaling message, len=181
+1970-01-01 03:36:24.560 INFO  [0] [rtc::impl::PeerConnection::changeIceState@1349] Changed ICE state to checking
+1970-01-01 03:36:24.571 INFO  [0] [rtc::impl::PeerConnection::changeState@1331] Changed state to connecting
+1970-01-01 03:36:24.604 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:437: Using STUN server stun.l.google.com:19302
+1970-01-01 03:36:24.663 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-01 03:36:24.665 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 136.49.53.62:54079 from server
+I (17773) WebRTC: Received complete WebSocket message (len=280)
+I (17793) WebRTC: Received candidate from client: 0123456789_890c14a5
+1970-01-01 03:36:24.686 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:2491: Candidate gathering done
+I (17793) WebRTC: New local candidate
+1970-01-01 03:36:24.702 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:2475: Connectivity timer started
+I (17813) WebRTC: Sending signaling message, len=203
+1970-01-01 03:36:24.717 INFO  [0] [rtc::impl::PeerConnection::changeGatheringState@1367] Changed gathering state to complete
+I (17853) WebRTC: Added remote candidate
+I (17853) WebRTC: Received complete WebSocket message (len=312)
+I (17853) WebRTC: Received candidate from client: 0123456789_890c14a5
+I (17863) WebRTC: Added remote candidate
+I (17863) WebRTC: Received complete WebSocket message (len=312)
+I (17873) WebRTC: Received candidate from client: 0123456789_890c14a5
+I (17873) WebRTC: Added remote candidate
+I (17883) WebRTC: Received complete WebSocket message (len=312)
+I (17883) WebRTC: Received candidate from client: 0123456789_890c14a5
+I (17893) WebRTC: Added remote candidate
+I (17893) WebRTC: Received complete WebSocket message (len=312)
+I (17903) WebRTC: Received candidate from client: 0123456789_890c14a5
+I (17903) WebRTC: Added remote candidate
+I (17913) WebRTC: Received complete WebSocket message (len=312)
+I (17913) WebRTC: Received candidate from client: 0123456789_890c14a5
+1970-01-01 03:36:24.806 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-01 03:36:24.823 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 192.168.1.118:54079 from server
+I (17953) WebRTC: New local candidate
+I (17953) WebRTC: Sending signaling message, len=204
+I (17953) WebRTC: Added remote candidate
+1970-01-01 03:36:24.850 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1158: Changing state to connected
+1970-01-01 03:36:24.860 INFO  [0] [rtc::impl::PeerConnection::changeIceState@1349] Changed ICE state to connected
+1970-01-01 03:36:24.879 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1158: Changing state to completed
+1970-01-01 03:36:24.885 INFO  [0] [rtc::impl::PeerConnection::changeIceState@1349] Changed ICE state to completed
+I (17993) WebRTC: Received complete WebSocket message (len=308)
+I (18013) WebRTC: Received candidate from client: 0123456789_890c14a5
+I (18023) WebRTC: Added remote candidate
+I (18023) WebRTC: Received complete WebSocket message (len=308)
+I (18023) WebRTC: Received candidate from client: 0123456789_890c14a5
+I (18033) WebRTC: Added remote candidate
+1970-01-01 03:36:25.222 INFO  [0] [rtc::impl::DtlsTransport::doRecv@567] DTLS handshake finished
+1970-01-01 03:36:25.310 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-01 03:36:25.313 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 192.168.1.118:54079 from server
+1970-01-01 03:36:25.344 INFO  [0] [rtc::impl::SctpTransport::processNotification@891] SCTP connected
+1970-01-01 03:36:25.345 INFO  [0] [rtc::impl::PeerConnection::changeState@1331] Changed state to connected
+I (18473) WebRTC: DataChannel opened for client: 0123456789_890c14a5
+I (18473) WebRTC: WebRTCSession created for client: 0123456789_890c14a5
+I (18483) WebRTC: Session added: 0123456789_890c14a5 (total: 1)
+I (18483) WebRTC: Received frame: stream_id=1 flags=0x0005 length=31
+I (18493) WebRTC: Request: {"method":"GET","pathname":"/"}
+I (18503) httpd_test: Root handler called
+I (18553) WebRTC: Received frame: stream_id=2 flags=0x0005 length=55
+I (18553) WebRTC: Request: {"method":"GET","pathname":"/static/images/image1.jpg"}
+I (18553) httpd_test: Image handler called for: /static/images/image1.jpg
+I (18583) httpd_test: Streaming file: 118097 bytes
+I (18903) psi_main: Heap: 32569 KB free | Internal: 289 KB
+1970-01-01 03:36:26.313 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-01 03:36:26.317 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 192.168.1.118:54079 from server
+I (19883) WebRTC: Received frame: stream_id=3 flags=0x0005 length=55
+I (19883) WebRTC: Request: {"method":"GET","pathname":"/static/images/image2.jpg"}
+I (19893) httpd_test: Image handler called for: /static/images/image2.jpg
+I (19913) httpd_test: Streaming file: 298415 bytes
+1970-01-01 03:36:28.327 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-01 03:36:28.329 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 192.168.1.118:54079 from server
+I (23903) psi_main: Heap: 32620 KB free | Internal: 294 KB
+1970-01-01 03:36:32.335 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-01 03:36:32.337 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 192.168.1.118:54079 from server
+I (28903) psi_main: Heap: 32620 KB free | Internal: 294 KB
+1970-01-01 03:36:40.343 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-01 03:36:40.344 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 192.168.1.118:54079 from server
+I (33903) psi_main: Heap: 32620 KB free | Internal: 294 KB

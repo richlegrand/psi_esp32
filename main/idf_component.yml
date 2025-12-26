@@ -7,3 +7,4 @@ dependencies:
   espressif/esp_hosted: "^2.5.3"
   # espressif/sock_utils: "*"  # Removed - using our own esp32_sockutils.cpp
   espressif/esp_websocket_client: "^1.5.0"
+  espressif/esp_video: "^1.4.0"

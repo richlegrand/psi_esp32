@@ -28,8 +28,13 @@
 #include "httpd_server.hpp"
 #include "httpd_test.h"
 #include "esp32_psram_init.h"
+#include "example_video_common.h"
+#include "esp32_video.hpp"
 
 static const char *TAG = "psi_main";
+
+// Benchmark mode: Skip WebRTC/HTTP server, just test camera/encoder
+#define BENCHMARK_MODE 0
 
 // WiFi credentials
 #define WIFI_SSID "psinet"
@@ -176,6 +181,92 @@ static void littlefs_init(void) {
 // Main Entry Point
 //=============================================================================
 
+#if BENCHMARK_MODE
+// Benchmark mode: Simple camera/encoder test without WebRTC/networking
+static ESP32Video* g_video = nullptr;
+static uint32_t g_frame_count = 0;
+static uint64_t g_total_bytes = 0;
+static uint64_t g_start_time_us = 0;
+
+static void benchmark_frame_callback(const uint8_t* data, size_t size, uint64_t timestamp_us, bool keyframe) {
+    g_frame_count++;
+    g_total_bytes += size;
+}
+
+extern "C" void app_main(void) {
+    ESP_LOGI(TAG, "=== BENCHMARK MODE: Camera/Encoder Performance Test ===");
+    esp_chip_info_t chip_info;
+    esp_chip_info(&chip_info);
+
+    // Get the major/minor version from eFuses
+    uint32_t major = efuse_hal_get_major_chip_version();
+    uint32_t minor = efuse_hal_get_minor_chip_version();
+
+    printf("Chip: ESP32-P4\n");
+    printf("Silicon Revision: v%d.%d\n", major, minor);
+    printf("PSRAM: %s\n", (chip_info.features & CHIP_FEATURE_SPIRAM) ? "Present" : "Not Detected");
+    // Initialize NVS (required for WiFi even in benchmark mode)
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    // Enable PSRAM
+    enable_psram_malloc();
+    ESP_LOGI(TAG, "Internal RAM: %d KB free", heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+
+    // Initialize video system (camera and H.264 encoder)
+    ESP_LOGI(TAG, "Initializing video system...");
+    ret = example_video_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize video system: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    // Create video capture object
+    g_video = new ESP32Video(1280, 720, 25);
+
+    if (!g_video->open()) {
+        ESP_LOGE(TAG, "Failed to open video");
+        delete g_video;
+        return;
+    }
+
+    // Start capture with callback
+    g_start_time_us = esp_timer_get_time();
+    if (!g_video->start(benchmark_frame_callback)) {
+        ESP_LOGE(TAG, "Failed to start video");
+        g_video->close();
+        delete g_video;
+        return;
+    }
+
+    ESP_LOGI(TAG, "=== Benchmark started - capturing 1280x720 @ 25fps ===");
+
+    // Monitor performance every 5 seconds
+    while (true) {
+        vTaskDelay(pdMS_TO_TICKS(5000));
+
+        uint64_t elapsed_us = esp_timer_get_time() - g_start_time_us;
+        float elapsed_sec = elapsed_us / 1000000.0f;
+        float avg_fps = g_frame_count / elapsed_sec;
+        float avg_bitrate_mbps = (g_total_bytes * 8) / (elapsed_sec * 1000000.0f);
+        float avg_frame_kb = g_total_bytes / (float)g_frame_count / 1024.0f;
+
+        size_t free_heap = esp_get_free_heap_size();
+        size_t free_internal = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+
+        ESP_LOGI(TAG, "=== STATS: Frames=%lu, FPS=%.1f, Bitrate=%.2f Mbps, Avg Frame=%.1f KB ===",
+                 g_frame_count, avg_fps, avg_bitrate_mbps, avg_frame_kb);
+        ESP_LOGI(TAG, "Memory: Heap=%lu KB, Internal=%lu KB",
+                 free_heap / 1024, free_internal / 1024);
+    }
+}
+
+#else
+// Normal mode: Full WebRTC server
 extern "C" void app_main(void) {
     ESP_LOGI(TAG, "Starting PSI ESP32 WebRTC Server...");
 
@@ -248,6 +339,18 @@ extern "C" void app_main(void) {
     ESP_LOGI(TAG, "After libdatachannel init - Internal RAM: %d KB free",
              heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
 
+    // Initialize video system (camera and H.264 encoder)
+    ESP_LOGI(TAG, "Initializing video system...");
+    ret = example_video_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to initialize video system: %s - video streaming will be disabled", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Video system initialized successfully");
+    }
+
+    ESP_LOGI(TAG, "After video init - Internal RAM: %d KB free",
+             heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024);
+
     // Set environment variables for httpd_start() to use
     setenv("DEVICE_UID", DEVICE_UID, 1);
     setenv("PSI_SERVER", PSI_SERVER_URL, 1);
@@ -282,3 +385,4 @@ extern "C" void app_main(void) {
         printf("%s\n", stats_buffer);
     }
 }
+#endif

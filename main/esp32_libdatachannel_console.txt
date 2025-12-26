@@ -1,0 +1,324 @@
+-- 0x4ff29ed0: esp_bootloader_get_description at /home/rich/pixy3/esp-idf-v5.5.1/components/esp_bootloader_format/esp_bootloader_desc.c:38
+load:0x4ff2cbd0,len:0x38b8
+--- 0x4ff2cbd0: esp_flash_encryption_enabled at /home/rich/pixy3/esp-idf-v5.5.1/components/bootloader_support/src/flash_encrypt.c:87
+entry 0x4ff29ee8
+--- 0x4ff29ee8: call_start_cpu0 at /home/rich/pixy3/esp-idf-v5.5.1/components/bootloader/subproject/main/bootloader_start.c:25
+I (28) boot: ESP-IDF v5.5.1-dirty 2nd stage bootloader
+I (28) boot: compile time Dec  7 2025 16:26:46
+I (29) boot: Multicore bootloader
+I (30) boot: chip revision: v1.0
+I (31) boot: efuse block revision: v0.3
+I (35) boot.esp32p4: SPI Speed      : 80MHz
+I (39) boot.esp32p4: SPI Mode       : DIO
+I (43) boot.esp32p4: SPI Flash Size : 16MB
+I (46) boot: Enabling RNG early entropy source...
+I (51) boot: Partition Table:
+I (53) boot: ## Label            Usage          Type ST Offset   Length
+I (60) boot:  0 nvs              WiFi data        01 02 00009000 00006000
+I (66) boot:  1 phy_init         RF data          01 01 0000f000 00001000
+I (73) boot:  2 factory          factory app      00 00 00010000 00400000
+I (79) boot:  3 storage          Unknown data     01 82 00410000 00800000
+I (86) boot:  4 coredump         Unknown data     01 03 00c10000 00010000
+I (93) boot: End of partition table
+I (96) esp_image: segment 0: paddr=00010020 vaddr=401b0020 size=b60a4h (745636) map
+I (208) esp_image: segment 1: paddr=000c60cc vaddr=30100000 size=00084h (   132) load
+I (209) esp_image: segment 2: paddr=000c6158 vaddr=4ff00000 size=09ec0h ( 40640) load
+I (219) esp_image: segment 3: paddr=000d0020 vaddr=40000020 size=1aad14h (1748244) map
+I (464) esp_image: segment 4: paddr=0027ad3c vaddr=4ff09ec0 size=0ab48h ( 43848) load
+I (473) esp_image: segment 5: paddr=0028588c vaddr=4ff14a80 size=030e8h ( 12520) load
+I (481) boot: Loaded app from partition at offset 0x10000
+I (482) boot: Disabling RNG early entropy source...
+I (494) hex_psram: vendor id    : 0x0d (AP)
+I (495) hex_psram: Latency      : 0x01 (Fixed)
+I (495) hex_psram: DriveStr.    : 0x00 (25 Ohm)
+I (496) hex_psram: dev id       : 0x03 (generation 4)
+I (500) hex_psram: density      : 0x07 (256 Mbit)
+I (504) hex_psram: good-die     : 0x06 (Pass)
+I (508) hex_psram: SRF          : 0x02 (Slow Refresh)
+I (513) hex_psram: BurstType    : 0x00 ( Wrap)
+I (517) hex_psram: BurstLen     : 0x03 (2048 Byte)
+I (522) hex_psram: BitMode      : 0x01 (X16 Mode)
+I (526) hex_psram: Readlatency  : 0x02 (10 cycles@Fixed)
+I (531) hex_psram: DriveStrength: 0x00 (1/1)
+I (535) esp_psram: Found 32MB PSRAM device
+I (539) esp_psram: Speed: 20MHz
+I (543) hex_psram: psram CS IO is dedicated
+I (546) cpu_start: Multicore app
+I (561) cpu_start: Pro cpu start user code
+I (561) cpu_start: cpu freq: 360000000 Hz
+I (561) app_init: Application information:
+I (561) app_init: Project name:     esp32_libdatachannel
+I (566) app_init: App version:      v1.0-local-websocket-1-g21dd980
+I (572) app_init: Compile time:     Dec 20 2025 09:20:14
+I (577) app_init: ELF file SHA256:  a7aca82e3...
+I (581) app_init: ESP-IDF:          v5.5.1
+I (585) efuse_init: Min chip rev:     v0.1
+I (589) efuse_init: Max chip rev:     v1.99 
+I (593) efuse_init: Chip rev:         v1.0
+I (597) heap_init: Initializing. RAM available for dynamic allocation:
+I (603) heap_init: At 4FF211D0 len 00019DF0 (103 KiB): RAM
+I (608) heap_init: At 4FF3AFC0 len 00004BF0 (18 KiB): RAM
+I (613) heap_init: At 4FF40000 len 00060000 (384 KiB): RAM
+I (619) heap_init: At 50108080 len 00007F80 (31 KiB): RTCRAM
+I (624) heap_init: At 30100084 len 00001F7C (7 KiB): TCM
+I (629) esp_psram: Adding pool of 32768K of PSRAM memory to heap allocator
+I (636) spi_flash: detected chip: gd
+I (639) spi_flash: flash io: dio
+I (645) host_init: ESP Hosted : Host chip_ip[18]
+I (646) H_API: ESP-Hosted starting. Hosted_Tasks: prio:23, stack: 5120 RPC_task_stack: 5120
+I (654) H_API: ** add_esp_wifi_remote_channels **
+I (661) esp_core_dump_uart: Init core dump to UART
+I (665) H_SDIO_DRV: sdio_data_to_rx_buf_task started
+I (665) main_task: Started on CPU0
+I (675) esp_psram: Reserving pool of 32K of internal memory for DMA/internal allocations
+I (675) main_task: Calling app_main()
+I (685) h264_streamer: Starting H.264 WebRTC streamer...
+I (715) rtc_psram: PSRAM malloc enabled as global default
+I (715) h264_streamer: Initializing LittleFS
+I (755) h264_streamer: LittleFS partition size: total: 8192 KB, used: 56 KB
+I (755) h264_streamer: After LittleFS - Internal RAM: 432 KB free
+I (755) h264_streamer: Initializing WiFi with ESP-Hosted...
+I (755) transport: Attempt connection with slave: retry[0]
+W (765) H_SDIO_DRV: Reset slave using GPIO[9]
+I (765) os_wrapper_esp: GPIO [9] configured
+I (2295) sdio_wrapper: SDIO master: Slot 1, Data-Lines: 4-bit Freq(KHz)[40000 KHz]
+I (2295) sdio_wrapper: GPIOs: CLK[28] CMD[27] D0[29] D1[30] D2[31] D3[32] Slave_Reset[9]
+I (2295) sdio_wrapper: Queues: Tx[20] Rx[20] SDIO-Rx-Mode[1]
+I (2335) sdio_wrapper: Function 0 Blocksize: 512
+I (2335) sdio_wrapper: Function 1 Blocksize: 512
+I (2435) H_SDIO_DRV: Card init success, TRANSPORT_RX_ACTIVE
+I (2435) transport: set_transport_state: 1
+I (2435) transport: Waiting for esp_hosted slave to be ready
+I (2465) H_SDIO_DRV: SDIO Host operating in STREAMING MODE
+I (2465) H_SDIO_DRV: Open data path at slave
+I (2465) H_SDIO_DRV: Starting SDIO process rx task
+I (2465) H_SDIO_DRV: Received ESP_PRIV_IF type message
+I (2465) transport: Received INIT event from ESP32 peripheral
+I (2475) transport: EVENT: 12
+I (2475) transport: Identified slave [esp32c6]
+I (2475) transport: EVENT: 11
+I (2485) transport: capabilities: 0xd
+I (2485) transport: Features supported are:
+I (2485) transport:      * WLAN
+I (2495) transport:        - HCI over SDIO
+I (2495) transport:        - BLE only
+I (2495) transport: EVENT: 13
+W (2505) transport: Version mismatch: Host [2.7.0] > Co-proc [0.0.0] ==> Upgrade co-proc to avoid RPC timeouts
+I (2515) transport: ESP board type is : 13 
+
+I (2515) transport: Base transport is set-up, TRANSPORT_TX_ACTIVE
+I (2525) H_API: Transport active
+I (2525) transport: Slave chip Id[12]
+I (2525) transport: raw_tp_dir[-], flow_ctrl: low[60] high[80]
+I (2535) transport: transport_delayed_init
+I (2535) hci_stub_drv: Host BT Support: Disabled
+I (2545) H_SDIO_DRV: Received INIT event
+I (2545) H_SDIO_DRV: Event type: 0x22
+I (2545) H_SDIO_DRV: Write thread started
+I (2665) RPC_WRAP: --- ESP Event: Slave ESP Init ---
+I (2885) h264_streamer: wifi_init_sta finished.
+I (2885) h264_streamer: After WiFi init - Internal RAM: 408 KB free
+I (2895) RPC_WRAP: ESP Event: wifi station started
+I (3905) H_API: esp_wifi_remote_connect
+W (3935) rpc_rsp: Hosted RPC_Resp [0x21a], uid [7], resp code [12295]
+I (6545) RPC_WRAP: ESP Event: Station mode: Connected
+I (6555) esp_wifi_remote: esp_wifi_internal_reg_rxcb: sta: 0x40136d6a
+--- 0x40136d6a: wifi_sta_receive at /home/rich/pixy3/esp-idf-v5.5.1/components/esp_wifi/src/wifi_netif.c:38
+I (7565) esp_netif_handlers: sta ip: 192.168.1.118, mask: 255.255.255.0, gw: 192.168.1.1
+I (7565) h264_streamer: got ip:192.168.1.118
+I (7565) h264_streamer: IPv6 link-local address creation initiated
+I (7565) h264_streamer: connected to ap SSID:psinet
+I (7575) h264_streamer: Waiting for IPv6 address...
+I (8755) h264_streamer: Got IPv6 address: fe80:0000:0000:0000:e6b3:23ff:fea6:a5d8
+I (8755) h264_streamer: IPv6 link-local address acquired
+I (8755) h264_streamer: Before InitLogger - Internal RAM: 407 KB free
+I (8755) h264_streamer: After InitLogger - Internal RAM: 407 KB free
+I (8765) rtc_psram: Configured pthread to use PSRAM for thread stacks
+I (8775) h264_streamer: After StartNetworking - Internal RAM: 405 KB free
+I (8775) h264_streamer: Starting WebRTC streamer...
+Memory status before WebRTC init:
+  Total free: 33070 KB
+  Internal free: 405 KB
+  DMA free: 375 KB
+  DMA+Internal free: 375 KB
+I (8845) Streamer: Connecting to WebSocket signaling server: ws://192.168.1.248:8000/server
+W (8845) websocket_client: `reconnect_timeout_ms` is not set, or it is less than or equal to zero, using default time out 10000 (milliseconds)
+W (8855) websocket_client: `network_timeout_ms` is not set, or it is less than or equal to zero, using default time out 10000 (milliseconds)
+I (8875) websocket_client: Started
+I (8875) FileParser: Pre-loading files from /littlefs/h264
+I (8895) Streamer: WebSocket connected to signaling server
+I (8905) FileParser: Loaded /littlefs/h264/0.h264: 6032 bytes
+I (8935) FileParser: Loaded /littlefs/h264/1.h264: 17579 bytes
+I (8945) FileParser: Loaded /littlefs/h264/2.h264: 1850 bytes
+I (8945) FileParser: Pre-loaded 3 files into PSRAM
+I (8945) FileParser: Pre-loading files from /littlefs/opus
+I (8955) FileParser: Loaded /littlefs/opus/0.opus: 160 bytes
+I (8965) FileParser: Loaded /littlefs/opus/1.opus: 160 bytes
+I (8975) FileParser: Loaded /littlefs/opus/2.opus: 160 bytes
+I (8975) FileParser: Pre-loaded 3 files into PSRAM
+I (8985) Streamer: Stream started
+I (8985) Streamer: Streamer ready, waiting for connections...
+I (9485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (9985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (10485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (10985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (11485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (11985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (12485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (12985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (13485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (13985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (14485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (14985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (15485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (15985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (16485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (16985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (17485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (17985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (18485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (18985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (19485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (19985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (20485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (20985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (21485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (21985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (22485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (22985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (23485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (23985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (24485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (24985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (25485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (25985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (26485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (26985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (27485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (27985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (28485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (28985) Streamer: Heap: 32931 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (29485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (29985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (30485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (30985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (31485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (31985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (32485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (32985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (33485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (33985) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (34485) Streamer: Heap: 32934 KB free | DMA: 365 KB | Internal: 395 KB | Clients: 0
+I (34785) Streamer: Received complete WebSocket message (len=39)
+I (34785) Streamer: Received request from client: xagZ6DCqgZ
+I (34785) Streamer: Creating peer connection for client: xagZ6DCqgZ
+srtp_init() - starting
+srtp_init() - calling srtp_crypto_kernel_init()
+srtp_crypto_kernel_init() - loading null cipher
+srtp_crypto_kernel_init() - loading aes_icm_128 cipher
+srtp_crypto_kernel_init() - aes_icm_128 returned 0
+srtp_crypto_kernel_init() - loading aes_icm_256 cipher
+srtp_crypto_kernel_init() - aes_icm_256 returned 0
+srtp_init() - srtp_crypto_kernel_init() returned 0
+srtp_init() - calling srtp_crypto_kernel_load_debug_module()
+srtp_init() - srtp_crypto_kernel_load_debug_module() returned 0
+srtp_init() - completed successfully
+1970-01-06 12:14:28.638 INFO  [0] [rtc::impl::IceTransport::IceTransport@113] Using STUN server "stun.l.google.com:19302"
+1970-01-06 12:14:28.641 WARN  [0] [rtc::impl::IceTransport::LogCallback@390] juice: random.c:90: Falling back on rand() for random bytes
+I (35005) Streamer: Heap: 32744 KB free | DMA: 354 KB | Internal: 385 KB | Clients: 0
+1970-01-06 12:14:28.678 INFO  [0] [rtc::impl::PeerConnection::changeSignalingState@1365] Changed signaling state to have-local-offer
+1970-01-06 12:14:28.680 INFO  [0] [rtc::impl::PeerConnection::changeGatheringState@1352] Changed gathering state to in-progress
+I (35035) Streamer: Gathering State: In Progress
+1970-01-06 12:14:28.692 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1158: Changing state to gathering
+1970-01-06 12:14:28.719 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1158: Changing state to connecting
+1970-01-06 12:14:28.721 INFO  [0] [rtc::impl::PeerConnection::changeIceState@1334] Changed ICE state to checking
+1970-01-06 12:14:28.732 INFO  [0] [rtc::impl::PeerConnection::changeState@1316] Changed state to connecting
+I (35085) Streamer: State: Disconnected
+I (35085) Streamer: Data channel created for debugging for client: xagZ6DCqgZ
+1970-01-06 12:14:28.754 WARN  [0] [rtc::PeerConnection::setLocalDescription@133] Unexpected local description in signaling state have-local-offer, ignoring
+1970-01-06 12:14:28.766 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:437: Using STUN server stun.l.google.com:19302
+1970-01-06 12:14:28.795 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-06 12:14:28.796 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 136.49.53.62:50783 from server
+1970-01-06 12:14:28.812 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:2491: Candidate gathering done
+1970-01-06 12:14:28.822 INFO  [0] [rtc::impl::PeerConnection::changeGatheringState@1352] Changed gathering state to complete
+I (35175) Streamer: Gathering State: Complete
+I (35175) Streamer: Sending offer to client: xagZ6DCqgZ
+I (35185) Streamer: Sending WebSocket message, len=1664
+I (35195) Streamer: Sent WebSocket message successfully, len=1664
+I (35295) Streamer: Received complete WebSocket message (len=1619)
+I (35295) Streamer: Received answer from client: xagZ6DCqgZ
+1970-01-06 12:14:28.960 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:2475: Connectivity timer started
+1970-01-06 12:14:28.963 INFO  [0] [rtc::impl::PeerConnection::changeSignalingState@1365] Changed signaling state to stable
+1970-01-06 12:14:29.000 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1434: STUN server binding successful
+1970-01-06 12:14:29.001 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1453: Got STUN mapped address 192.168.1.118:50783 from server
+I (35505) Streamer: Heap: 32670 KB free | DMA: 352 KB | Internal: 382 KB | Clients: 1
+1970-01-06 12:14:29.264 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1158: Changing state to connected
+1970-01-06 12:14:29.266 INFO  [0] [rtc::impl::PeerConnection::changeIceState@1334] Changed ICE state to connected
+1970-01-06 12:14:29.277 INFO  [0] [rtc::impl::PeerConnection::initDtlsTransport@277] This connection requires media support
+1970-01-06 12:14:29.304 INFO  [0] [rtc::impl::IceTransport::LogCallback@390] juice: agent.c:1158: Changing state to completed
+1970-01-06 12:14:29.306 INFO  [0] [rtc::impl::PeerConnection::changeIceState@1334] Changed ICE state to completed
+I (36005) Streamer: Heap: 32641 KB free | DMA: 326 KB | Internal: 356 KB | Clients: 1
+1970-01-06 12:14:29.662 INFO  [0] [rtc::impl::DtlsTransport::doRecv@567] DTLS handshake finished
+1970-01-06 12:14:29.689 INFO  [0] [rtc::impl::DtlsSrtpTransport::postHandshake@276] Deriving SRTP keying material (Mbed TLS)
+I (36135) Streamer: Video track opened for client: xagZ6DCqgZ
+I (36135) Streamer: Audio track opened for client: xagZ6DCqgZ
+1970-01-06 12:14:29.793 INFO  [0] [rtc::impl::SctpTransport::processNotification@891] SCTP connected
+1970-01-06 12:14:29.802 INFO  [0] [rtc::impl::PeerConnection::changeState@1316] Changed state to connected
+I (36135) Streamer: addToStream: isAddingVideo=1, state=0
+I (36155) Streamer: addToStream: State changed to 2
+I (36155) Streamer: State: Connected
+I (36165) Streamer: addToStream: isAddingVideo=0, state=2
+I (36175) Streamer: addToStream: Both tracks available
+I (36175) Streamer: addToStream: Setting state to Ready
+I (36185) Streamer: addToStream: Starting stream
+I (36215) Streamer: Data channel opened for client: xagZ6DCqgZ
+I (36225) Streamer: Sent initial Ping to xagZ6DCqgZ
+I (36225) Streamer: Stream started
+I (36225) Streamer: addToStream: Stream started
+I (36505) Streamer: Heap: 32484 KB free | DMA: 324 KB | Internal: 355 KB | Clients: 1
+I (37005) Streamer: Heap: 32477 KB free | DMA: 325 KB | Internal: 355 KB | Clients: 1
+I (37245) Streamer: Received message from xagZ6DCqgZ: Pong 0
+I (37255) Streamer: Sent Ping to xagZ6DCqgZ
+I (37505) Streamer: Heap: 32470 KB free | DMA: 325 KB | Internal: 355 KB | Clients: 1
+I (38005) Streamer: Heap: 32469 KB free | DMA: 325 KB | Internal: 355 KB | Clients: 1
+I (38275) Streamer: Received message from xagZ6DCqgZ: Pong 1029
+I (38285) Streamer: Sent Ping to xagZ6DCqgZ
+I (38505) Streamer: Heap: 32468 KB free | DMA: 325 KB | Internal: 355 KB | Clients: 1
+I (39005) Streamer: Heap: 32468 KB free | DMA: 325 KB | Internal: 355 KB | Clients: 1
+I (39465) Streamer: Received message from xagZ6DCqgZ: Pong 2220
+I (39475) Streamer: Sent Ping to xagZ6DCqgZ
+I (39505) Streamer: Heap: 32468 KB free | DMA: 325 KB | Internal: 355 KB | Clients: 1
+I (40005) Streamer: Heap: 32469 KB free | DMA: 325 KB | Internal: 355 KB | Clients: 1
+I (40485) Streamer: Received message from xagZ6DCqgZ: Pong 3245
+I (40505) Streamer: Sent Ping to xagZ6DCqgZ
+I (40505) Streamer: Heap: 32469 KB free | DMA: 325 KB | Internal: 355 KB | Clients: 1
+1970-01-06 12:14:34.250 INFO  [0] [rtc::impl::DtlsTransport::doRecv@608] DTLS closed
+1970-01-06 12:14:34.251 INFO  [0] [rtc::impl::PeerConnection::changeState@1316] Changed state to disconnected
+1970-01-06 12:14:34.259 INFO  [0] [rtc::impl::SctpTransport::incoming@463] SCTP disconnected
+I (40605) Streamer: Data channel closed for client: xagZ6DCqgZ
+I (40615) Streamer: State: Disconnected
+I (40615) Streamer: Client destructor called
+1970-01-06 12:14:34.289 INFO  [0] [rtc::impl::PeerConnection::changeIceState@1334] Changed ICE state to closed
+1970-01-06 12:14:34.292 INFO  [0] [rtc::impl::PeerConnection::changeState@1316] Changed state to closed
+I (40645) Streamer: State: Disconnected
+1970-01-06 12:14:34.310 INFO  [0] [rtc::impl::PeerConnection::~PeerConnection@83] PeerConnection::impl destructor called
+E (40875) Streamer: Unable to send video packet: Track is not open
+I (41005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (41505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (42005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (42505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (43005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (43505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (44005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (44505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (45005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (45505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (46005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (46505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (47005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (47505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (48005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (48505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (49005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (49505) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
+I (50005) Streamer: Heap: 32786 KB free | DMA: 358 KB | Internal: 389 KB | Clients: 0
