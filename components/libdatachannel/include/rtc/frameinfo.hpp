@@ -25,6 +25,13 @@ struct RTC_CPP_EXPORT FrameInfo {
 	uint8_t payloadType = 0;
 
 	optional<std::chrono::duration<double>> timestampSeconds;
+
+#ifdef ESP32_PORT
+	// ESP32 optimization: Frame type hint for H.264
+	// I-frames (keyframes) have multiple NAL units (SPS, PPS, IDR)
+	// P-frames typically have fewer NAL units (sometimes just slice, sometimes SEI + slice)
+	bool isKeyframe = false;
+#endif
 };
 
 } // namespace rtc

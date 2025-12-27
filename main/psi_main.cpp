@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 #include "esp_log.h"
 #include "esp_system.h"
@@ -195,6 +196,8 @@ static void benchmark_frame_callback(const uint8_t* data, size_t size, uint64_t 
 
 extern "C" void app_main(void) {
     ESP_LOGI(TAG, "=== BENCHMARK MODE: Camera/Encoder Performance Test ===");
+
+#if 0  // Chip info requires efuse component in CMakeLists.txt
     esp_chip_info_t chip_info;
     esp_chip_info(&chip_info);
 
@@ -203,9 +206,11 @@ extern "C" void app_main(void) {
     uint32_t minor = efuse_hal_get_minor_chip_version();
 
     printf("Chip: ESP32-P4\n");
-    printf("Silicon Revision: v%d.%d\n", major, minor);
-    printf("PSRAM: %s\n", (chip_info.features & CHIP_FEATURE_SPIRAM) ? "Present" : "Not Detected");
-    // Initialize NVS (required for WiFi even in benchmark mode)
+    printf("Silicon Revision: v%" PRIu32 ".%" PRIu32 "\n", major, minor);
+    printf("PSRAM: %s\n", (chip_info.features & ESP_CHIP_FEATURE_EMB_PSRAM) ? "Present" : "Not Detected");
+#endif
+
+    // Initialize NVS (required for camera/encoder initialization)
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());

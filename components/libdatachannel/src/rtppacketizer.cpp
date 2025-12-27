@@ -15,7 +15,9 @@
 
 #ifdef ESP32_PORT
 #include <esp_heap_caps.h>
+#include <esp_timer.h>
 #include "impl/internals.hpp"
+extern bool g_log_frame_timing;  // Defined in httpd_server.cpp
 #define HEAP_CHECK(label) do { \
     size_t dma_free = heap_caps_get_free_size(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL); \
     size_t psram_free = heap_caps_get_free_size(MALLOC_CAP_SPIRAM); \
@@ -177,6 +179,14 @@ void RtpPacketizer::outgoing(message_vector &messages,
                              [[maybe_unused]] const message_callback &send) {
 	message_vector result;
 
+#ifdef ESP32_PORT
+	uint64_t total_start_us = esp_timer_get_time();
+	uint64_t fragment_total_us = 0;
+	uint64_t packetize_total_us = 0;
+	size_t total_payloads = 0;
+	size_t total_message_bytes = 0;
+#endif
+
 	for (const auto &message : messages) {
 		if (const auto &frameInfo = message->frameInfo) {
 			if (frameInfo->payloadType && frameInfo->payloadType != rtpConfig->payloadType)
@@ -191,7 +201,16 @@ void RtpPacketizer::outgoing(message_vector &messages,
 				rtpConfig->timestamp = frameInfo->timestamp;
 		}
 
+#ifdef ESP32_PORT
+		total_message_bytes += message->size();
+		uint64_t fragment_start_us = esp_timer_get_time();
+#endif
 		auto payloads = fragment(std::move(*message));
+#ifdef ESP32_PORT
+		uint64_t fragment_end_us = esp_timer_get_time();
+		fragment_total_us += (fragment_end_us - fragment_start_us);
+		total_payloads += payloads.size();
+#endif
 
 		for (size_t i = 0; i < payloads.size(); i++) {
 			if (rtpConfig->dependencyDescriptorContext.has_value()) {
@@ -201,12 +220,34 @@ void RtpPacketizer::outgoing(message_vector &messages,
 			}
 			bool mark = i == payloads.size() - 1;
 
+#ifdef ESP32_PORT
+			uint64_t packetize_start_us = esp_timer_get_time();
+#endif
 			auto packet = packetize(payloads[i], mark);
+#ifdef ESP32_PORT
+			uint64_t packetize_end_us = esp_timer_get_time();
+			packetize_total_us += (packetize_end_us - packetize_start_us);
+#endif
 			result.push_back(packet);
 		}
 	}
 
 	messages.swap(result);
+
+#ifdef ESP32_PORT
+	uint64_t total_end_us = esp_timer_get_time();
+	uint32_t total_ms = (total_end_us - total_start_us) / 1000;
+	uint32_t fragment_ms = fragment_total_us / 1000;
+	uint32_t packetize_ms = packetize_total_us / 1000;
+	uint32_t overhead_ms = total_ms - fragment_ms - packetize_ms;
+
+	// Log if flag is set (synchronized with other pipeline layers)
+	if (g_log_frame_timing) {
+		PLOG_INFO << "  RTP: " << total_message_bytes << "B → " << total_payloads
+		          << " pkts, packetize=" << packetize_ms << "ms, overhead="
+		          << overhead_ms << "ms, total=" << total_ms << "ms";
+	}
+#endif
 }
 
 } // namespace rtc

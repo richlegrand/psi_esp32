@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "psi_main.cpp" "httpd_server.cpp" "httpd_test.c" "esp32_video.cpp"
+    SRCS "psi_main.cpp" "httpd_server.cpp" "httpd_test.c" "video_streamer.cpp"
     INCLUDE_DIRS "."
     REQUIRES
         libdatachannel

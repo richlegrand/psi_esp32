@@ -8,7 +8,7 @@
  */
 
 #include "httpd_server.hpp"
-#include "esp32_video.hpp"
+#include "video_streamer.hpp"
 #include <cJSON.h>
 #include <cstring>
 #include "esp_log.h"
@@ -25,6 +25,13 @@
 static const char* TAG = "WebRTC";
 
 using namespace rtc;
+
+//=============================================================================
+// Frame Timing Control
+//=============================================================================
+
+// Global flag to synchronize logging across all pipeline layers
+bool g_log_frame_timing = false;
 
 //=============================================================================
 // WebRTCSession Implementation
@@ -180,6 +187,9 @@ void WebRTCSession::handleSwspFrame(const rtc::binary& frame_data) {
 WebRTCServer::WebRTCServer(const std::string& uid, const std::string& server_url)
     : uid_(uid), server_url_(server_url) {
     ESP_LOGI(TAG, "WebRTCServer created for UID: %s", uid.c_str());
+
+    // Create video streamer (1280x720 @ 25fps)
+    video_streamer_ = std::make_unique<VideoStreamer>(1280, 720, 25);
 }
 
 WebRTCServer::~WebRTCServer() {
@@ -378,7 +388,9 @@ void WebRTCServer::handleRequest(const std::string& client_id) {
     });
 
     // Create DataChannel (device creates it, not browser)
+    ESP_LOGI(TAG, "Creating datachannel...");
     auto dc = pc->createDataChannel("http");
+    ESP_LOGI(TAG, "Datachannel created");
 
     // Store DataChannel in a shared location accessible by callbacks
     // This avoids the reference cycle while keeping it alive
@@ -409,6 +421,7 @@ void WebRTCServer::handleRequest(const std::string& client_id) {
     });
 
     // Add video track (will be included in offer)
+    ESP_LOGI(TAG, "Adding video track...");
     const uint8_t payloadType = 96;
     const uint32_t ssrc = std::hash<std::string>{}(client_id) & 0xFFFFFFFF;  // Unique SSRC per client
     const std::string cname = "video-stream";
@@ -416,7 +429,9 @@ void WebRTCServer::handleRequest(const std::string& client_id) {
     Description::Video media(cname, Description::Direction::SendOnly);
     media.addH264Codec(payloadType);
     media.addSSRC(ssrc, cname, "stream1", cname);
+    ESP_LOGI(TAG, "Calling pc->addTrack()...");
     auto video_track = pc->addTrack(media);
+    ESP_LOGI(TAG, "pc->addTrack() returned");
 
     // Create RTP configuration
     auto rtpConfig = std::make_shared<RtpPacketizationConfig>(ssrc, cname, payloadType, H264RtpPacketizer::ClockRate);
@@ -435,26 +450,30 @@ void WebRTCServer::handleRequest(const std::string& client_id) {
     // Set media handler
     video_track->setMediaHandler(packetizer);
 
-    // Set onOpen callback - start video if this is the first track
-    video_track->onOpen([this, client_id]() {
+    // Set onOpen callback - add track to video streamer
+    video_track->onOpen([this, client_id, video_track]() {
         ESP_LOGI(TAG, "Video track opened for client: %s", client_id.c_str());
 
-        // Start video capture if not already running
-        if (!video_running_) {
-            startVideoStream();
+        if (video_streamer_) {
+            video_streamer_->addTrack(client_id, video_track);
         }
     });
 
-    // Store video track for sending frames
-    {
-        std::lock_guard<std::mutex> lock(video_tracks_mutex_);
-        video_tracks_[client_id] = video_track;
-    }
+    // Set onClosed callback - remove track from video streamer
+    video_track->onClosed([this, client_id]() {
+        ESP_LOGI(TAG, "Video track closed for client: %s", client_id.c_str());
+
+        if (video_streamer_) {
+            video_streamer_->removeTrack(client_id);
+        }
+    });
 
     ESP_LOGI(TAG, "Added video track for client: %s (SSRC: %u)", client_id.c_str(), ssrc);
 
     // Create offer (no remote description yet)
+    ESP_LOGI(TAG, "Calling setLocalDescription() to create offer...");
     pc->setLocalDescription();
+    ESP_LOGI(TAG, "setLocalDescription() returned, offer will be sent via callback");
 }
 
 void WebRTCServer::handleAnswer(const std::string& client_id, const std::string& sdp) {
@@ -536,20 +555,7 @@ void WebRTCServer::removeSession(const std::string& client_id) {
         peer_connections_.erase(pc_it);
     }
 
-    // Remove video track
-    {
-        std::lock_guard<std::mutex> lock_video(video_tracks_mutex_);
-        auto vt_it = video_tracks_.find(client_id);
-        if (vt_it != video_tracks_.end()) {
-            video_tracks_.erase(vt_it);
-            ESP_LOGI(TAG, "Video track removed for client: %s", client_id.c_str());
-
-            // Stop video if no more tracks
-            if (video_tracks_.empty() && video_running_) {
-                stopVideoStream();
-            }
-        }
-    }
+    // Note: Video track cleanup handled by onClosed() callback
 }
 
 std::shared_ptr<WebRTCSession> WebRTCServer::getSession(const std::string& client_id) {
@@ -636,20 +642,16 @@ void WebRTCServer::stop() {
 
     running_ = false;
 
-    // Stop video streaming
-    stopVideoStream();
+    // Clean up video streamer (will auto-stop when tracks are removed)
+    if (video_streamer_) {
+        video_streamer_.reset();
+    }
 
     // Close all sessions
     {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
         sessions_.clear();
         peer_connections_.clear();
-    }
-
-    // Clear video tracks
-    {
-        std::lock_guard<std::mutex> lock(video_tracks_mutex_);
-        video_tracks_.clear();
     }
 
     // Close WebSocket
@@ -1054,96 +1056,3 @@ esp_err_t HandlerDispatcher::executeHandler(httpd_req_t* req, const httpd_uri_t*
     return result;
 }
 
-//=============================================================================
-// Video Streaming Implementation
-//=============================================================================
-
-void WebRTCServer::startVideoStream() {
-    if (video_running_) {
-        ESP_LOGW(TAG, "Video already running");
-        return;
-    }
-
-    ESP_LOGI(TAG, "Starting video stream...");
-
-    // Create video capture (1280x720 @ 25fps - OV2710 native mode)
-    video_capture_ = std::make_unique<ESP32Video>(1280, 720, 25);
-
-    if (!video_capture_->open()) {
-        ESP_LOGE(TAG, "Failed to open video capture");
-        video_capture_.reset();
-        return;
-    }
-
-    video_running_ = true;
-    video_start_pts_ = 0;  // Will be set from first frame
-
-    // Start capture with frame callback
-    if (!video_capture_->start([this](const uint8_t* data, size_t size, uint64_t timestamp_us, bool keyframe) {
-        sendVideoFrame(data, size, timestamp_us, keyframe);
-    })) {
-        ESP_LOGE(TAG, "Failed to start video capture");
-        video_capture_->close();
-        video_capture_.reset();
-        video_running_ = false;
-        return;
-    }
-
-    ESP_LOGI(TAG, "Video stream started");
-}
-
-void WebRTCServer::stopVideoStream() {
-    if (!video_running_) {
-        return;
-    }
-
-    ESP_LOGI(TAG, "Stopping video stream...");
-    video_running_ = false;
-
-    if (video_capture_) {
-        video_capture_->stop();
-        video_capture_->close();
-        video_capture_.reset();
-    }
-
-    ESP_LOGI(TAG, "Video stream stopped");
-}
-
-void WebRTCServer::sendVideoFrame(const uint8_t* data, size_t size, uint64_t timestamp_us, bool keyframe) {
-    if (!video_running_ || !data || size == 0) {
-        return;
-    }
-
-    // Initialize PTS on first frame
-    if (video_start_pts_ == 0) {
-        video_start_pts_ = timestamp_us;
-    }
-
-    // Calculate relative PTS in seconds
-    double pts_sec = (timestamp_us - video_start_pts_) / 1000000.0;
-    std::chrono::duration<double> frameTime(pts_sec);
-    FrameInfo frameInfo(frameTime);
-
-    // Log keyframes
-    if (keyframe) {
-        ESP_LOGI(TAG, "Sending keyframe: %u bytes, PTS: %.3f s", size, pts_sec);
-    }
-
-    // Send frame to all connected video tracks
-    std::lock_guard<std::mutex> lock(video_tracks_mutex_);
-    for (auto& [client_id, track] : video_tracks_) {
-        if (track && track->isOpen()) {
-            try {
-                track->sendFrame(reinterpret_cast<const std::byte*>(data), size, frameInfo);
-
-                // Log every 30 frames to avoid spam
-                static int frame_counter = 0;
-                if (++frame_counter % 30 == 0) {
-                    ESP_LOGI(TAG, "Sent %d frames to %s", frame_counter, client_id.c_str());
-                }
-            } catch (const std::exception& e) {
-                ESP_LOGE(TAG, "Failed to send video frame to %s: %s", client_id.c_str(), e.what());
-            }
-        }
-    }
-}

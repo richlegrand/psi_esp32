@@ -138,12 +138,8 @@ private:
     // PeerConnection registry (for adding remote candidates)
     std::map<std::string, std::shared_ptr<rtc::PeerConnection>> peer_connections_;
 
-    // Video tracks (one per client)
-    std::map<std::string, std::shared_ptr<rtc::Track>> video_tracks_;
-    std::mutex video_tracks_mutex_;
-    std::unique_ptr<class ESP32Video> video_capture_;  // Forward declaration
-    std::atomic<bool> video_running_{false};
-    uint64_t video_start_pts_{0};
+    // Video streaming (single VideoStreamer handles all clients)
+    std::unique_ptr<class VideoStreamer> video_streamer_;
 
     // HTTP handlers
     std::vector<httpd_uri_t> uri_handlers_;
@@ -165,11 +161,6 @@ private:
     void handleCandidate(const std::string& client_id, const std::string& candidate,
                          const std::string& mid);
     void sendSignalingMessage(const std::string& message);
-
-    // Video streaming
-    void startVideoStream();
-    void stopVideoStream();
-    void sendVideoFrame(const uint8_t* data, size_t size, uint64_t timestamp_us, bool keyframe);
 };
 
 //=============================================================================
