@@ -68,10 +68,13 @@ private:
     int cap_fd_;       // Camera capture device
     int m2m_fd_;       // H.264 encoder device
 
-    // PPA (Pixel Processing Accelerator) for hardware scaling
-    ppa_client_handle_t ppa_scaler_;
-    uint8_t* scaled_buffer_;
-    size_t scaled_buffer_size_;
+    // PPA (Pixel Processing Accelerator) - Dual pipeline for CV
+    ppa_client_handle_t ppa_yuv_to_rgb_;   // YUV420 → RGB888 (with optional scaling)
+    ppa_client_handle_t ppa_rgb_to_yuv_;   // RGB888 → YUV420 (after CV processing)
+    uint8_t* rgb_buffer_;                   // RGB888 buffer for CV processing (in PSRAM)
+    size_t rgb_buffer_size_;
+    uint8_t* yuv_output_buffer_;            // YUV420 buffer after RGB→YUV conversion
+    size_t yuv_output_buffer_size_;
 
     // Camera buffers
     static constexpr int CAM_BUFFER_COUNT = 4;
@@ -122,6 +125,9 @@ private:
     // Capture loop (runs in capture_task_)
     static void captureTaskEntry(void* arg);
     void captureLoop();
+
+    // CV processing hook (runs on RGB888 buffer)
+    void processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t height);
 
     // Send loop (runs in send_task_)
     static void sendTaskEntry(void* arg);

@@ -21,6 +21,11 @@
 #define CAMERA_DEV_PATH   "/dev/video0"   // MIPI-CSI camera
 #define ENCODER_DEV_PATH  "/dev/video11"  // H.264 encoder
 
+// CV Pipeline Configuration
+// 0: Direct YUV→YUV downscaling (fastest, no CV processing)
+// 1: YUV→RGB→CV→RGB→YUV pipeline (enables computer vision)
+#define CV_PIPELINE 0
+
 static const char* TAG = "VideoStreamer";
 
 // Global flag for frame timing logs (synchronized with h264rtppacketizer)
@@ -36,7 +41,9 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
       fps_(fps),
       use_ppa_(false),  // Determined after querying sensor
       cap_fd_(-1), m2m_fd_(-1),
-      ppa_scaler_(nullptr), scaled_buffer_(nullptr), scaled_buffer_size_(0),
+      ppa_yuv_to_rgb_(nullptr), ppa_rgb_to_yuv_(nullptr),
+      rgb_buffer_(nullptr), rgb_buffer_size_(0),
+      yuv_output_buffer_(nullptr), yuv_output_buffer_size_(0),
       send_queue_(nullptr),
       capture_task_(nullptr), send_task_(nullptr),
       running_(false), force_keyframe_(false),
@@ -288,51 +295,123 @@ bool VideoStreamer::initEncoder() {
 }
 
 bool VideoStreamer::initPPA() {
-    // Only initialize PPA if scaling is needed
-    if (!use_ppa_) {
-        ESP_LOGI(TAG, "PPA scaling disabled (output = camera resolution)");
-        return true;
-    }
+#if CV_PIPELINE
+    ESP_LOGI(TAG, "Initializing dual PPA pipeline for CV processing...");
+    size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
 
-    // Register PPA client for scale-rotate-mirror operations
+    // Register PPA client #1: YUV420 → RGB888 (with optional scaling)
     ppa_client_config_t ppa_config = {
         .oper_type = PPA_OPERATION_SRM,
         .max_pending_trans_num = 1,
-        .data_burst_length = PPA_DATA_BURST_LENGTH_128,  // Maximum burst length
+        .data_burst_length = PPA_DATA_BURST_LENGTH_128,
     };
 
-    esp_err_t ret = ppa_register_client(&ppa_config, &ppa_scaler_);
+    esp_err_t ret = ppa_register_client(&ppa_config, &ppa_yuv_to_rgb_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register PPA YUV→RGB client: %d", ret);
+        return false;
+    }
+
+    // Register PPA client #2: RGB888 → YUV420 (after CV processing)
+    ret = ppa_register_client(&ppa_config, &ppa_rgb_to_yuv_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register PPA RGB→YUV client: %d", ret);
+        ppa_unregister_client(ppa_yuv_to_rgb_);
+        ppa_yuv_to_rgb_ = nullptr;
+        return false;
+    }
+
+    // Allocate RGB888 buffer for CV processing (DMA + PSRAM)
+    // RGB888 format: width * height * 3 bytes
+    rgb_buffer_size_ = output_width_ * output_height_ * 3;
+    rgb_buffer_ = (uint8_t*)heap_caps_malloc(rgb_buffer_size_,
+                                              MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
+    if (!rgb_buffer_) {
+        ESP_LOGE(TAG, "Failed to allocate RGB888 buffer (%zu bytes)", rgb_buffer_size_);
+        ppa_unregister_client(ppa_yuv_to_rgb_);
+        ppa_unregister_client(ppa_rgb_to_yuv_);
+        ppa_yuv_to_rgb_ = nullptr;
+        ppa_rgb_to_yuv_ = nullptr;
+        return false;
+    }
+
+    // Allocate YUV420 output buffer (after RGB→YUV conversion)
+    // YUV420 format: width * height * 1.5 bytes
+    yuv_output_buffer_size_ = output_width_ * output_height_ * 3 / 2;
+    yuv_output_buffer_ = (uint8_t*)heap_caps_malloc(yuv_output_buffer_size_,
+                                                     MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
+    if (!yuv_output_buffer_) {
+        ESP_LOGE(TAG, "Failed to allocate YUV output buffer (%zu bytes)", yuv_output_buffer_size_);
+        heap_caps_free(rgb_buffer_);
+        ppa_unregister_client(ppa_yuv_to_rgb_);
+        ppa_unregister_client(ppa_rgb_to_yuv_);
+        rgb_buffer_ = nullptr;
+        ppa_yuv_to_rgb_ = nullptr;
+        ppa_rgb_to_yuv_ = nullptr;
+        return false;
+    }
+
+    // Log memory usage
+    size_t internal_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    bool rgb_in_psram = esp_ptr_external_ram(rgb_buffer_);
+    bool yuv_in_psram = esp_ptr_external_ram(yuv_output_buffer_);
+
+    ESP_LOGI(TAG, "PPA dual pipeline initialized:");
+    ESP_LOGI(TAG, "  Stage 1: YUV420 %dx%d → RGB888 %dx%d (%s scaling)",
+             cam_width_, cam_height_, output_width_, output_height_,
+             use_ppa_ ? "with" : "no");
+    ESP_LOGI(TAG, "  Stage 2: CV processing on RGB888");
+    ESP_LOGI(TAG, "  Stage 3: RGB888 → YUV420 %dx%d",
+             output_width_, output_height_);
+    ESP_LOGI(TAG, "  RGB buffer: %zu bytes in %s",
+             rgb_buffer_size_, rgb_in_psram ? "PSRAM" : "INTERNAL RAM");
+    ESP_LOGI(TAG, "  YUV buffer: %zu bytes in %s",
+             yuv_output_buffer_size_, yuv_in_psram ? "PSRAM" : "INTERNAL RAM");
+    ESP_LOGI(TAG, "  Internal RAM used: %zu bytes (for DMA descriptors)",
+             internal_before - internal_after);
+
+    return true;
+#else
+    // Direct YUV→YUV scaling mode (no CV pipeline)
+    ESP_LOGI(TAG, "Initializing PPA for direct YUV downscaling...");
+    size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+
+    ppa_client_config_t ppa_config = {
+        .oper_type = PPA_OPERATION_SRM,
+        .max_pending_trans_num = 1,
+        .data_burst_length = PPA_DATA_BURST_LENGTH_128,
+    };
+
+    esp_err_t ret = ppa_register_client(&ppa_config, &ppa_yuv_to_rgb_);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register PPA client: %d", ret);
         return false;
     }
 
-    // Allocate scaled output buffer (DMA + PSRAM)
-    // YUV420 format: width * height * 1.5 bytes
-    scaled_buffer_size_ = output_width_ * output_height_ * 3 / 2;
-    // Log memory before allocation
-    size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-
-    scaled_buffer_ = (uint8_t*)heap_caps_malloc(scaled_buffer_size_,
-                                                MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
-    if (!scaled_buffer_) {
-        ESP_LOGE(TAG, "Failed to allocate PPA scaled buffer (%zu bytes)", scaled_buffer_size_);
-        ppa_unregister_client(ppa_scaler_);
-        ppa_scaler_ = nullptr;
+    // Allocate YUV420 output buffer for scaled frames
+    yuv_output_buffer_size_ = output_width_ * output_height_ * 3 / 2;
+    yuv_output_buffer_ = (uint8_t*)heap_caps_malloc(yuv_output_buffer_size_,
+                                                     MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
+    if (!yuv_output_buffer_) {
+        ESP_LOGE(TAG, "Failed to allocate YUV output buffer (%zu bytes)", yuv_output_buffer_size_);
+        ppa_unregister_client(ppa_yuv_to_rgb_);
+        ppa_yuv_to_rgb_ = nullptr;
         return false;
     }
 
-    // Log memory after allocation and verify buffer location
     size_t internal_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
-    bool in_psram = heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true) &&
-                    esp_ptr_external_ram(scaled_buffer_);
+    bool yuv_in_psram = esp_ptr_external_ram(yuv_output_buffer_);
 
-    ESP_LOGI(TAG, "PPA scaler initialized: %dx%d → %dx%d (buffer: %zu bytes in %s)",
-             cam_width_, cam_height_, output_width_, output_height_, scaled_buffer_size_,
-             in_psram ? "PSRAM" : "INTERNAL RAM");
-    ESP_LOGI(TAG, "PPA buffer allocated: Internal RAM used: %zu bytes (for DMA descriptors/overhead)",
+    ESP_LOGI(TAG, "PPA direct scaling initialized:");
+    ESP_LOGI(TAG, "  YUV420 %dx%d → YUV420 %dx%d",
+             cam_width_, cam_height_, output_width_, output_height_);
+    ESP_LOGI(TAG, "  YUV buffer: %zu bytes in %s",
+             yuv_output_buffer_size_, yuv_in_psram ? "PSRAM" : "INTERNAL RAM");
+    ESP_LOGI(TAG, "  Internal RAM used: %zu bytes (for DMA descriptors)",
              internal_before - internal_after);
+
     return true;
+#endif
 }
 
 void VideoStreamer::cleanup() {
@@ -363,15 +442,28 @@ void VideoStreamer::cleanup() {
     }
 
     // Free PPA resources
-    if (scaled_buffer_) {
-        heap_caps_free(scaled_buffer_);
-        scaled_buffer_ = nullptr;
-        scaled_buffer_size_ = 0;
+#if CV_PIPELINE
+    if (rgb_buffer_) {
+        heap_caps_free(rgb_buffer_);
+        rgb_buffer_ = nullptr;
+        rgb_buffer_size_ = 0;
     }
 
-    if (ppa_scaler_) {
-        ppa_unregister_client(ppa_scaler_);
-        ppa_scaler_ = nullptr;
+    if (ppa_rgb_to_yuv_) {
+        ppa_unregister_client(ppa_rgb_to_yuv_);
+        ppa_rgb_to_yuv_ = nullptr;
+    }
+#endif
+
+    if (yuv_output_buffer_) {
+        heap_caps_free(yuv_output_buffer_);
+        yuv_output_buffer_ = nullptr;
+        yuv_output_buffer_size_ = 0;
+    }
+
+    if (ppa_yuv_to_rgb_) {
+        ppa_unregister_client(ppa_yuv_to_rgb_);
+        ppa_yuv_to_rgb_ = nullptr;
     }
 }
 
@@ -619,6 +711,38 @@ bool VideoStreamer::shouldSkipFrame() const {
     return queued >= (SEND_QUEUE_DEPTH * 3 / 4);
 }
 
+//=============================================================================
+// CV Processing Hook (Phase 1: Placeholder)
+//=============================================================================
+
+void VideoStreamer::processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t height) {
+    // Phase 1: Placeholder - just pass through
+    // Future phases will add:
+    //   - Edge detection (Canny, Sobel)
+    //   - Motion detection (frame differencing)
+    //   - Object tracking (color-based, blob detection)
+    //   - Annotations (draw boxes, text overlays)
+
+    // For now, this is a no-op to verify YUV→RGB→YUV roundtrip works
+    // RGB data format: width * height * 3 bytes (R, G, B interleaved)
+
+    // Example: Draw a simple test pattern (optional, can be commented out)
+    // Uncomment to verify RGB buffer is working:
+    
+    for (uint32_t y = 0; y < 10; y++) {
+        for (uint32_t x = 0; x < width; x++) {
+            uint32_t idx = (y * width + x) * 3;
+            rgb_data[idx + 0] = 0;  
+            rgb_data[idx + 1] = 0;
+            rgb_data[idx + 2] = 0xff; // Red line at top
+        }
+    }
+}
+
+//=============================================================================
+// Capture Loop
+//=============================================================================
+
 void VideoStreamer::captureLoop() {
     ESP_LOGI(TAG, "Capture loop started (pipelined mode, %d encoder buffers)", ENCODER_OUTPUT_BUFFERS);
 
@@ -644,71 +768,159 @@ void VideoStreamer::captureLoop() {
                     continue;  // Don't try to read from encoder this iteration
                 }
 
-                // Scale frame with PPA if enabled
-                uint8_t* encoder_input_ptr;
-                size_t encoder_input_size;
+                // Process frame with PPA:
+                // CV mode: YUV→RGB→CV→RGB→YUV (3-stage)
+                // Direct mode: YUV→YUV scaling (1-stage)
+                // Both modes output to yuv_output_buffer_
 
-                if (ppa_scaler_) {
-                    // Use PPA to scale the frame
-                    ppa_srm_oper_config_t srm_config = {
-                        .in = {
-                            .buffer = cap_buffer_[cam_buf.index],
-                            .pic_w = cam_width_,
-                            .pic_h = cam_height_,
-                            .block_w = cam_width_,
-                            .block_h = cam_height_,
-                            .block_offset_x = 0,
-                            .block_offset_y = 0,
-                            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
-                            .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-                        },
-                        .out = {
-                            .buffer = scaled_buffer_,
-                            .buffer_size = scaled_buffer_size_,
-                            .pic_w = output_width_,
-                            .pic_h = output_height_,
-                            .block_offset_x = 0,
-                            .block_offset_y = 0,
-                            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
-                            .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-                        },
-                        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-                        .scale_x = (float)output_width_ / (float)cam_width_,
-                        .scale_y = (float)output_height_ / (float)cam_height_,
-                        .mirror_x = false,
-                        .mirror_y = false,
-                        .rgb_swap = false,
-                        .byte_swap = false,
-                        .alpha_update_mode = PPA_ALPHA_NO_CHANGE,  // No alpha blending
-                        .alpha_fix_val = 0,  // Initialize union member (unused when NO_CHANGE)
-                        .mode = PPA_TRANS_MODE_BLOCKING,
-                        .user_data = nullptr,  // No user data callback
-                    };
+#if CV_PIPELINE
+                // CV Pipeline: 3-stage conversion with RGB intermediate
+                // Stage 1: YUV420 → RGB888
+                ppa_srm_oper_config_t yuv_to_rgb_config = {
+                    .in = {
+                        .buffer = cap_buffer_[cam_buf.index],
+                        .pic_w = cam_width_,
+                        .pic_h = cam_height_,
+                        .block_w = cam_width_,
+                        .block_h = cam_height_,
+                        .block_offset_x = 0,
+                        .block_offset_y = 0,
+                        .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+                    },
+                    .out = {
+                        .buffer = rgb_buffer_,
+                        .buffer_size = rgb_buffer_size_,
+                        .pic_w = output_width_,
+                        .pic_h = output_height_,
+                        .block_offset_x = 0,
+                        .block_offset_y = 0,
+                        .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
+                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+                    },
+                    .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+                    .scale_x = (float)output_width_ / (float)cam_width_,
+                    .scale_y = (float)output_height_ / (float)cam_height_,
+                    .mirror_x = false,
+                    .mirror_y = false,
+                    .rgb_swap = false,
+                    .byte_swap = false,
+                    .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+                    .alpha_fix_val = 0,
+                    .mode = PPA_TRANS_MODE_BLOCKING,
+                    .user_data = nullptr,
+                };
 
-                    esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_scaler_, &srm_config);
-                    if (ret != ESP_OK) {
-                        ESP_LOGE(TAG, "PPA scaling failed: %d", ret);
-                        ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-                        continue;
-                    }
-
-                    encoder_input_ptr = scaled_buffer_;
-                    encoder_input_size = scaled_buffer_size_;
-                } else {
-                    // No scaling - pass camera buffer directly
-                    encoder_input_ptr = cap_buffer_[cam_buf.index];
-                    encoder_input_size = cam_buf.bytesused;
+                esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_to_rgb_config);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "PPA YUV→RGB failed: %d", ret);
+                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
+                    continue;
                 }
 
-                // Submit to encoder
+                // Stage 2: CV processing on RGB888 buffer
+                processCVFrame(rgb_buffer_, output_width_, output_height_);
+
+                // Stage 3: RGB888 → YUV420
+                ppa_srm_oper_config_t rgb_to_yuv_config = {
+                    .in = {
+                        .buffer = rgb_buffer_,
+                        .pic_w = output_width_,
+                        .pic_h = output_height_,
+                        .block_w = output_width_,
+                        .block_h = output_height_,
+                        .block_offset_x = 0,
+                        .block_offset_y = 0,
+                        .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
+                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+                    },
+                    .out = {
+                        .buffer = yuv_output_buffer_,
+                        .buffer_size = yuv_output_buffer_size_,
+                        .pic_w = output_width_,
+                        .pic_h = output_height_,
+                        .block_offset_x = 0,
+                        .block_offset_y = 0,
+                        .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+                    },
+                    .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+                    .scale_x = 1.0f,  // No scaling (already at output size)
+                    .scale_y = 1.0f,
+                    .mirror_x = false,
+                    .mirror_y = false,
+                    .rgb_swap = false,
+                    .byte_swap = false,
+                    .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+                    .alpha_fix_val = 0,
+                    .mode = PPA_TRANS_MODE_BLOCKING,
+                    .user_data = nullptr,
+                };
+
+                ret = ppa_do_scale_rotate_mirror(ppa_rgb_to_yuv_, &rgb_to_yuv_config);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "PPA RGB→YUV failed: %d", ret);
+                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
+                    continue;
+                }
+#else
+                // Direct YUV→YUV scaling (no CV processing)
+                ppa_srm_oper_config_t yuv_scale_config = {
+                    .in = {
+                        .buffer = cap_buffer_[cam_buf.index],
+                        .pic_w = cam_width_,
+                        .pic_h = cam_height_,
+                        .block_w = cam_width_,
+                        .block_h = cam_height_,
+                        .block_offset_x = 0,
+                        .block_offset_y = 0,
+                        .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+                    },
+                    .out = {
+                        .buffer = yuv_output_buffer_,
+                        .buffer_size = yuv_output_buffer_size_,
+                        .pic_w = output_width_,
+                        .pic_h = output_height_,
+                        .block_offset_x = 0,
+                        .block_offset_y = 0,
+                        .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+                    },
+                    .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+                    .scale_x = (float)output_width_ / (float)cam_width_,
+                    .scale_y = (float)output_height_ / (float)cam_height_,
+                    .mirror_x = false,
+                    .mirror_y = false,
+                    .rgb_swap = false,
+                    .byte_swap = false,
+                    .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+                    .alpha_fix_val = 0,
+                    .mode = PPA_TRANS_MODE_BLOCKING,
+                    .user_data = nullptr,
+                };
+
+                esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_scale_config);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "PPA YUV scaling failed: %d", ret);
+                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
+                    continue;
+                }
+#endif
+
+                // Submit to encoder (both paths output to yuv_output_buffer_)
                 memset(&enc_input_buf, 0, sizeof(enc_input_buf));
                 enc_input_buf.index = 0;
                 enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
                 enc_input_buf.memory = V4L2_MEMORY_USERPTR;
-                enc_input_buf.m.userptr = (unsigned long)encoder_input_ptr;
-                enc_input_buf.length = encoder_input_size;
+                enc_input_buf.m.userptr = (unsigned long)yuv_output_buffer_;
+                enc_input_buf.length = yuv_output_buffer_size_;
 
                 if (ioctl(m2m_fd_, VIDIOC_QBUF, &enc_input_buf) == 0) {
                     frames_in_encoder_++;
