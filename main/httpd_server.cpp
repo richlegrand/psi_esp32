@@ -188,8 +188,11 @@ WebRTCServer::WebRTCServer(const std::string& uid, const std::string& server_url
     : uid_(uid), server_url_(server_url) {
     ESP_LOGI(TAG, "WebRTCServer created for UID: %s", uid.c_str());
 
-    // Create video streamer (1280x720 @ 25fps)
-    video_streamer_ = std::make_unique<VideoStreamer>(1280, 720, 25);
+    // Create video streamer
+    // Output: 640x360 @ 25fps
+    // Camera resolution auto-detected (set via menuconfig: 1280x720 or 1920x1080)
+    // PPA scaling automatically enabled if output != camera
+    video_streamer_ = std::make_unique<VideoStreamer>(640, 360, 25);
 }
 
 WebRTCServer::~WebRTCServer() {

@@ -30,7 +30,6 @@
 #include "httpd_test.h"
 #include "esp32_psram_init.h"
 #include "example_video_common.h"
-#include "esp32_video.hpp"
 
 static const char *TAG = "psi_main";
 

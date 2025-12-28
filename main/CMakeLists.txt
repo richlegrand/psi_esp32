@@ -14,6 +14,7 @@ idf_component_register(
         esp_websocket_client  # WebSocket client for signaling
         esp_http_server  # For httpd_uri_t and httpd_req_t types
         esp_video        # ESP32-P4 video capture and H.264 encoding
+        esp_driver_ppa   # Pixel Processing Accelerator for hardware scaling
         example_video_common  # Board-specific video initialization
 )
 

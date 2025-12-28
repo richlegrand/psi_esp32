@@ -8,6 +8,9 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
+#include "esp_video_ioctl.h"
+#include "esp_cam_sensor_types.h"
 #include <cstring>
 #include <unistd.h>
 
@@ -27,9 +30,13 @@ extern bool g_log_frame_timing;
 // Constructor / Destructor
 //=============================================================================
 
-VideoStreamer::VideoStreamer(uint32_t width, uint32_t height, uint32_t fps)
-    : width_(width), height_(height), fps_(fps),
+VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint32_t fps)
+    : cam_width_(0), cam_height_(0),  // Will be auto-detected from sensor
+      output_width_(output_width), output_height_(output_height),
+      fps_(fps),
+      use_ppa_(false),  // Determined after querying sensor
       cap_fd_(-1), m2m_fd_(-1),
+      ppa_scaler_(nullptr), scaled_buffer_(nullptr), scaled_buffer_size_(0),
       send_queue_(nullptr),
       capture_task_(nullptr), send_task_(nullptr),
       running_(false), force_keyframe_(false),
@@ -75,11 +82,34 @@ bool VideoStreamer::initCamera() {
     }
     ESP_LOGI(TAG, "Camera: %s", cap.card);
 
-    // Set format (YUV420 for H.264 encoder input)
+    // Query current sensor format to auto-detect camera resolution
+    // (Set via menuconfig: Component config → Camera Sensor → OV2710 → Default format)
+    esp_cam_sensor_format_t sensor_fmt;
+    if (ioctl(cap_fd_, VIDIOC_G_SENSOR_FMT, &sensor_fmt) < 0) {
+        ESP_LOGE(TAG, "Failed to query sensor format");
+        return false;
+    }
+
+    // Store detected camera resolution
+    cam_width_ = sensor_fmt.width;
+    cam_height_ = sensor_fmt.height;
+    ESP_LOGI(TAG, "Detected camera resolution: %dx%d @ %d fps",
+             cam_width_, cam_height_, sensor_fmt.fps);
+
+    // Determine if PPA scaling is needed
+    use_ppa_ = (output_width_ != cam_width_ || output_height_ != cam_height_);
+    if (use_ppa_) {
+        ESP_LOGI(TAG, "PPA scaling enabled: %dx%d → %dx%d",
+                 cam_width_, cam_height_, output_width_, output_height_);
+    } else {
+        ESP_LOGI(TAG, "No scaling needed (output matches camera resolution)");
+    }
+
+    // Set V4L2 format (YUV420 for H.264 encoder input)
     memset(&format, 0, sizeof(format));
     format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    format.fmt.pix.width = width_;
-    format.fmt.pix.height = height_;
+    format.fmt.pix.width = cam_width_;
+    format.fmt.pix.height = cam_height_;
     format.fmt.pix.pixelformat = V4L2_PIX_FMT_YUV420;
 
     if (ioctl(cap_fd_, VIDIOC_S_FMT, &format) < 0) {
@@ -126,7 +156,7 @@ bool VideoStreamer::initCamera() {
         }
     }
 
-    ESP_LOGI(TAG, "Camera initialized: %dx%d YUV420", width_, height_);
+    ESP_LOGI(TAG, "Camera initialized: %dx%d YUV420", cam_width_, cam_height_);
     return true;
 }
 
@@ -161,7 +191,7 @@ bool VideoStreamer::initEncoder() {
     control[0].value = fps_;  // Keyframe every second
 
     control[1].id = V4L2_CID_MPEG_VIDEO_BITRATE;
-    control[1].value = (width_ * height_ * fps_) / 8;
+    control[1].value = (getWidth() * getHeight() * fps_) / 8;
 
     control[2].id = V4L2_CID_MPEG_VIDEO_H264_MIN_QP;
     control[2].value = 10;
@@ -177,11 +207,11 @@ bool VideoStreamer::initEncoder() {
                  control[0].value, control[1].value, control[2].value, control[3].value);
     }
 
-    // Set encoder input format (YUV420)
+    // Set encoder input format (YUV420) - uses output resolution (after scaling if enabled)
     memset(&format, 0, sizeof(format));
     format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-    format.fmt.pix.width = width_;
-    format.fmt.pix.height = height_;
+    format.fmt.pix.width = getWidth();
+    format.fmt.pix.height = getHeight();
     format.fmt.pix.pixelformat = V4L2_PIX_FMT_YUV420;
     format.fmt.pix.field = V4L2_FIELD_NONE;
 
@@ -204,8 +234,8 @@ bool VideoStreamer::initEncoder() {
     // Set encoder output format (H.264)
     memset(&format, 0, sizeof(format));
     format.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    format.fmt.pix.width = width_;
-    format.fmt.pix.height = height_;
+    format.fmt.pix.width = getWidth();
+    format.fmt.pix.height = getHeight();
     format.fmt.pix.pixelformat = V4L2_PIX_FMT_H264;
 
     if (ioctl(m2m_fd_, VIDIOC_S_FMT, &format) < 0) {
@@ -257,6 +287,54 @@ bool VideoStreamer::initEncoder() {
     return true;
 }
 
+bool VideoStreamer::initPPA() {
+    // Only initialize PPA if scaling is needed
+    if (!use_ppa_) {
+        ESP_LOGI(TAG, "PPA scaling disabled (output = camera resolution)");
+        return true;
+    }
+
+    // Register PPA client for scale-rotate-mirror operations
+    ppa_client_config_t ppa_config = {
+        .oper_type = PPA_OPERATION_SRM,
+        .max_pending_trans_num = 1,
+        .data_burst_length = PPA_DATA_BURST_LENGTH_128,  // Maximum burst length
+    };
+
+    esp_err_t ret = ppa_register_client(&ppa_config, &ppa_scaler_);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register PPA client: %d", ret);
+        return false;
+    }
+
+    // Allocate scaled output buffer (DMA + PSRAM)
+    // YUV420 format: width * height * 1.5 bytes
+    scaled_buffer_size_ = output_width_ * output_height_ * 3 / 2;
+    // Log memory before allocation
+    size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+
+    scaled_buffer_ = (uint8_t*)heap_caps_malloc(scaled_buffer_size_,
+                                                MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
+    if (!scaled_buffer_) {
+        ESP_LOGE(TAG, "Failed to allocate PPA scaled buffer (%zu bytes)", scaled_buffer_size_);
+        ppa_unregister_client(ppa_scaler_);
+        ppa_scaler_ = nullptr;
+        return false;
+    }
+
+    // Log memory after allocation and verify buffer location
+    size_t internal_after = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    bool in_psram = heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true) &&
+                    esp_ptr_external_ram(scaled_buffer_);
+
+    ESP_LOGI(TAG, "PPA scaler initialized: %dx%d → %dx%d (buffer: %zu bytes in %s)",
+             cam_width_, cam_height_, output_width_, output_height_, scaled_buffer_size_,
+             in_psram ? "PSRAM" : "INTERNAL RAM");
+    ESP_LOGI(TAG, "PPA buffer allocated: Internal RAM used: %zu bytes (for DMA descriptors/overhead)",
+             internal_before - internal_after);
+    return true;
+}
+
 void VideoStreamer::cleanup() {
     // Unmap camera buffers
     for (int i = 0; i < CAM_BUFFER_COUNT; i++) {
@@ -282,6 +360,18 @@ void VideoStreamer::cleanup() {
     if (m2m_fd_ >= 0) {
         ::close(m2m_fd_);
         m2m_fd_ = -1;
+    }
+
+    // Free PPA resources
+    if (scaled_buffer_) {
+        heap_caps_free(scaled_buffer_);
+        scaled_buffer_ = nullptr;
+        scaled_buffer_size_ = 0;
+    }
+
+    if (ppa_scaler_) {
+        ppa_unregister_client(ppa_scaler_);
+        ppa_scaler_ = nullptr;
     }
 }
 
@@ -352,7 +442,7 @@ bool VideoStreamer::startStreaming() {
         return true;  // Already running
     }
 
-    ESP_LOGI(TAG, "Starting video streamer: %dx%d @ %d fps", width_, height_, fps_);
+    ESP_LOGI(TAG, "Starting video streamer: %dx%d @ %d fps", getWidth(), getHeight(), fps_);
 
     // Initialize camera and encoder
     if (!initCamera()) {
@@ -362,6 +452,12 @@ bool VideoStreamer::startStreaming() {
 
     if (!initEncoder()) {
         ESP_LOGE(TAG, "Failed to initialize encoder");
+        cleanup();
+        return false;
+    }
+
+    if (!initPPA()) {
+        ESP_LOGE(TAG, "Failed to initialize PPA scaler");
         cleanup();
         return false;
     }
@@ -548,13 +644,71 @@ void VideoStreamer::captureLoop() {
                     continue;  // Don't try to read from encoder this iteration
                 }
 
+                // Scale frame with PPA if enabled
+                uint8_t* encoder_input_ptr;
+                size_t encoder_input_size;
+
+                if (ppa_scaler_) {
+                    // Use PPA to scale the frame
+                    ppa_srm_oper_config_t srm_config = {
+                        .in = {
+                            .buffer = cap_buffer_[cam_buf.index],
+                            .pic_w = cam_width_,
+                            .pic_h = cam_height_,
+                            .block_w = cam_width_,
+                            .block_h = cam_height_,
+                            .block_offset_x = 0,
+                            .block_offset_y = 0,
+                            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+                            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+                        },
+                        .out = {
+                            .buffer = scaled_buffer_,
+                            .buffer_size = scaled_buffer_size_,
+                            .pic_w = output_width_,
+                            .pic_h = output_height_,
+                            .block_offset_x = 0,
+                            .block_offset_y = 0,
+                            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+                            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+                        },
+                        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+                        .scale_x = (float)output_width_ / (float)cam_width_,
+                        .scale_y = (float)output_height_ / (float)cam_height_,
+                        .mirror_x = false,
+                        .mirror_y = false,
+                        .rgb_swap = false,
+                        .byte_swap = false,
+                        .alpha_update_mode = PPA_ALPHA_NO_CHANGE,  // No alpha blending
+                        .alpha_fix_val = 0,  // Initialize union member (unused when NO_CHANGE)
+                        .mode = PPA_TRANS_MODE_BLOCKING,
+                        .user_data = nullptr,  // No user data callback
+                    };
+
+                    esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_scaler_, &srm_config);
+                    if (ret != ESP_OK) {
+                        ESP_LOGE(TAG, "PPA scaling failed: %d", ret);
+                        ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
+                        continue;
+                    }
+
+                    encoder_input_ptr = scaled_buffer_;
+                    encoder_input_size = scaled_buffer_size_;
+                } else {
+                    // No scaling - pass camera buffer directly
+                    encoder_input_ptr = cap_buffer_[cam_buf.index];
+                    encoder_input_size = cam_buf.bytesused;
+                }
+
                 // Submit to encoder
                 memset(&enc_input_buf, 0, sizeof(enc_input_buf));
                 enc_input_buf.index = 0;
                 enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
                 enc_input_buf.memory = V4L2_MEMORY_USERPTR;
-                enc_input_buf.m.userptr = (unsigned long)cap_buffer_[cam_buf.index];
-                enc_input_buf.length = cam_buf.bytesused;
+                enc_input_buf.m.userptr = (unsigned long)encoder_input_ptr;
+                enc_input_buf.length = encoder_input_size;
 
                 if (ioctl(m2m_fd_, VIDIOC_QBUF, &enc_input_buf) == 0) {
                     frames_in_encoder_++;

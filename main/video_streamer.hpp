@@ -24,11 +24,18 @@ extern "C" {
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "driver/ppa.h"
+#include "esp_heap_caps.h"
 }
 
 class VideoStreamer {
 public:
-    VideoStreamer(uint32_t width = 1280, uint32_t height = 720, uint32_t fps = 25);
+    // Constructor
+    // output_width/output_height: Desired output resolution
+    //   - Camera resolution is auto-detected from sensor (via menuconfig setting)
+    //   - PPA scaling automatically enabled if output != camera resolution
+    // fps: Frame rate
+    VideoStreamer(uint32_t output_width, uint32_t output_height, uint32_t fps = 25);
     ~VideoStreamer();
 
     // Add a track to send video to
@@ -43,19 +50,28 @@ public:
     // Check if streaming is active
     bool isRunning() const { return running_; }
 
-    uint32_t getWidth() const { return width_; }
-    uint32_t getHeight() const { return height_; }
+    // Get output video dimensions
+    uint32_t getWidth() const { return output_width_; }
+    uint32_t getHeight() const { return output_height_; }
     uint32_t getFPS() const { return fps_; }
 
 private:
     // Configuration
-    uint32_t width_;
-    uint32_t height_;
+    uint32_t cam_width_;       // Camera resolution (auto-detected from sensor)
+    uint32_t cam_height_;
+    uint32_t output_width_;    // Desired output resolution
+    uint32_t output_height_;
     uint32_t fps_;
+    bool use_ppa_;             // True if PPA scaling needed (output != camera)
 
     // Device file descriptors
     int cap_fd_;       // Camera capture device
     int m2m_fd_;       // H.264 encoder device
+
+    // PPA (Pixel Processing Accelerator) for hardware scaling
+    ppa_client_handle_t ppa_scaler_;
+    uint8_t* scaled_buffer_;
+    size_t scaled_buffer_size_;
 
     // Camera buffers
     static constexpr int CAM_BUFFER_COUNT = 4;
@@ -96,6 +112,7 @@ private:
     // Initialization
     bool initCamera();
     bool initEncoder();
+    bool initPPA();
     void cleanup();
 
     // Internal start/stop (called by addTrack/removeTrack)
