@@ -195,16 +195,16 @@ bool VideoStreamer::initEncoder() {
     controls.controls = control;
 
     control[0].id = V4L2_CID_MPEG_VIDEO_H264_I_PERIOD;
-    control[0].value = fps_;  // Keyframe every second
+    control[0].value = fps_ * 2;  // Keyframe every 2 seconds (was 1) - reduces I-frame overhead
 
     control[1].id = V4L2_CID_MPEG_VIDEO_BITRATE;
-    control[1].value = (getWidth() * getHeight() * fps_) / 8;
+    control[1].value = (getWidth() * getHeight() * fps_) / 10;  // ~576 Kbps (was 720 Kbps)
 
     control[2].id = V4L2_CID_MPEG_VIDEO_H264_MIN_QP;
-    control[2].value = 10;
+    control[2].value = 23;  // Tighter range: 23-29 (was 10-35)
 
     control[3].id = V4L2_CID_MPEG_VIDEO_H264_MAX_QP;
-    control[3].value = 35;
+    control[3].value = 24;  // QP variation of only 6 instead of 25
 
     if (ioctl(m2m_fd_, VIDIOC_S_EXT_CTRLS, &controls) < 0) {
         ESP_LOGE(TAG, "Failed to set encoder parameters: errno=%d (%s)", errno, strerror(errno));
