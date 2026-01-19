@@ -94,6 +94,9 @@ private:
     };
     QueueHandle_t send_queue_;
 
+    // PPA non-blocking synchronization
+    SemaphoreHandle_t ppa_done_sem_;
+
     // Tasks
     TaskHandle_t capture_task_;
     TaskHandle_t send_task_;
@@ -129,12 +132,18 @@ private:
     // CV processing hook (runs on RGB888 buffer)
     void processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t height);
 
+    // Test processing (PSRAM bandwidth test)
+    uint32_t testProcessing();
+
     // Send loop (runs in send_task_)
     static void sendTaskEntry(void* arg);
     void sendLoop();
 
     // Queue depth check for front-end frame skipping
     bool shouldSkipFrame() const;
+
+    // PPA callback for non-blocking mode
+    static bool ppaDoneCallback(ppa_client_handle_t ppa_client, ppa_event_data_t* event_data, void* user_data);
 };
 
 #endif // VIDEO_STREAMER_HPP

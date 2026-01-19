@@ -161,6 +161,103 @@ Important: `std::shared_ptr` is header-only template code. The lock policy is de
 
 ---
 
+## RESOLVED ISSUE: Video Streamer Optimizations (2026-01-07)
+
+### Non-Blocking PPA Implementation
+
+**Problem**: PPA (Pixel Processing Accelerator) hardware scaling was operating in blocking mode, preventing CPU from doing useful work during the ~32ms downscaling operation (1280x720 → 640x360 YUV420).
+
+**Solution**: Implemented non-blocking PPA with callback-based completion notification:
+
+**Implementation** (`main/video_streamer.cpp`, `main/video_streamer.hpp`):
+1. Added `SemaphoreHandle_t ppa_done_sem_` for completion signaling
+2. Registered PPA client with `max_pending_trans_num = 3` for triple buffering
+3. Added ISR-safe callback `ppaDoneCallback()` that signals semaphore
+4. Changed PPA transaction mode to `PPA_TRANS_MODE_NON_BLOCKING`
+5. Submit PPA → Do work in parallel → Wait for semaphore
+
+**Key Code Pattern**:
+```cpp
+// Submit PPA (returns immediately)
+ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_scale_config);
+
+// === PPA runs in hardware while CPU does other work ===
+testProcessing();  // PSRAM bandwidth test
+
+// Wait for PPA completion
+xSemaphoreTake(ppa_done_sem_, pdMS_TO_TICKS(100));
+```
+
+**Performance Measurements**:
+- PPA processing time: ~32ms per frame (1280x720→640x360 YUV420)
+- Frame budget at 25 fps: 40ms
+- Result: ~23-24 fps actual (PPA is bottleneck)
+- Opportunity: Use 32ms PPA time for parallel CV processing
+
+**Test Processing Routine**: Added `testProcessing()` that reads 345KB from PSRAM to measure bandwidth contention between CPU and PPA hardware when both access PSRAM simultaneously.
+
+### Task Leak Fix
+
+**Problem**: `video_send` tasks were leaking on every connection/disconnection cycle. Each leaked task consumed:
+- 16KB Internal RAM (stack)
+- Task control structures
+- After 6 connections: 96KB Internal RAM wasted, 6 zombie tasks
+
+**Root Cause** (`main/video_streamer.cpp:1147`):
+```cpp
+// BUG: Never checks running_ flag!
+while (true) {
+    // Blocks forever on queue
+    if (xQueueReceive(send_queue_, &frame, portMAX_DELAY) == pdTRUE) {
+```
+
+When `stopStreaming()` set `running_ = false`, the task remained blocked on `xQueueReceive()` with infinite timeout and never exited.
+
+**Fix**:
+```cpp
+// Check running_ flag and use timeout
+while (running_) {
+    // Timeout allows periodic check of running_ flag
+    if (xQueueReceive(send_queue_, &frame, pdMS_TO_TICKS(100)) == pdTRUE) {
+```
+
+Now tasks properly exit within 100ms when `running_` becomes false, calling `vTaskDelete(NULL)`.
+
+### Frame Counter Bug Fix
+
+**Problem**: FPS displayed as ~45 fps instead of actual ~23 fps.
+
+**Root Cause**: `capture_frame_count_` was incremented **twice** per frame:
+- Line 974: After PPA completion (capture path) ✓
+- Line 1028: When getting encoder output (WRONG - duplicate)
+
+**Fix**: Removed duplicate increment at line 1028. Counter now accurately reflects frames processed.
+
+### PPA Performance Analysis
+
+**Why 23 fps instead of 25 fps?**
+- Target frame time: 40ms (25 fps)
+- PPA processing: 32ms (hardware bottleneck)
+- Other overhead: ~10ms (camera DQBUF, encoder, queueing)
+- Total: ~42ms → 23.8 fps
+
+**Options to reach 25 fps**:
+1. **Skip PPA scaling**: Encode at native 1280x720 (4x pixels, but H.264 compression mitigates bandwidth increase)
+2. **Use sensor binning**: Configure OV2710 to output 640x360 natively (if supported)
+3. **Accept 23 fps**: Quality vs performance tradeoff
+
+### Memory Notes
+
+**Task Stacks**: `xTaskCreate` uses **Internal RAM** by default (16KB per task). For PSRAM stacks:
+- Global option: menuconfig → FreeRTOS → "Place FreeRTOS task stacks in external memory"
+- Per-task option: Use `xTaskCreateStatic` with PSRAM-allocated buffer
+
+**Files Modified**:
+- `main/video_streamer.hpp` - Added PPA semaphore, callback, test processing
+- `main/video_streamer.cpp` - Non-blocking PPA implementation, task leak fix, frame counter fix
+
+---
+
 ## CURRENT ISSUE: Callback Memory Leak Investigation (2025-11-11)
 
 ### Problem
@@ -304,4 +401,4 @@ idf.py menuconfig     # Configure
 - `components/libsrtp/CMakeLists.txt` - SRTP component
 
 ---
-*Last updated: 2025-11-16 - Added libstdc++ memory fixes (atomic lock policy, shared_mutex leak)*
+*Last updated: 2026-01-07 - Added non-blocking PPA implementation, task leak fix, performance analysis*

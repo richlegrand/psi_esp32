@@ -45,6 +45,7 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
       rgb_buffer_(nullptr), rgb_buffer_size_(0),
       yuv_output_buffer_(nullptr), yuv_output_buffer_size_(0),
       send_queue_(nullptr),
+      ppa_done_sem_(nullptr),
       capture_task_(nullptr), send_task_(nullptr),
       running_(false), force_keyframe_(false),
       video_start_pts_(0), capture_frame_count_(0),
@@ -204,7 +205,7 @@ bool VideoStreamer::initEncoder() {
     control[2].value = 23;  // Tighter range: 23-29 (was 10-35)
 
     control[3].id = V4L2_CID_MPEG_VIDEO_H264_MAX_QP;
-    control[3].value = 24;  // QP variation of only 6 instead of 25
+    control[3].value = 23;  // QP variation of only 6 instead of 25
 
     if (ioctl(m2m_fd_, VIDIOC_S_EXT_CTRLS, &controls) < 0) {
         ESP_LOGE(TAG, "Failed to set encoder parameters: errno=%d (%s)", errno, strerror(errno));
@@ -373,18 +374,42 @@ bool VideoStreamer::initPPA() {
     return true;
 #else
     // Direct YUV→YUV scaling mode (no CV pipeline)
-    ESP_LOGI(TAG, "Initializing PPA for direct YUV downscaling...");
+    ESP_LOGI(TAG, "Initializing PPA for direct YUV downscaling (NON-BLOCKING)...");
     size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
 
+    // Create semaphore for PPA completion signaling
+    ppa_done_sem_ = xSemaphoreCreateBinary();
+    if (!ppa_done_sem_) {
+        ESP_LOGE(TAG, "Failed to create PPA semaphore");
+        return false;
+    }
+
+    // Register PPA client with queue depth = 3 for triple buffering
     ppa_client_config_t ppa_config = {
         .oper_type = PPA_OPERATION_SRM,
-        .max_pending_trans_num = 1,
+        .max_pending_trans_num = 3,  // Allow 3 ops in flight for parallelism
         .data_burst_length = PPA_DATA_BURST_LENGTH_128,
     };
 
     esp_err_t ret = ppa_register_client(&ppa_config, &ppa_yuv_to_rgb_);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to register PPA client: %d", ret);
+        vSemaphoreDelete(ppa_done_sem_);
+        ppa_done_sem_ = nullptr;
+        return false;
+    }
+
+    // Register completion callback
+    ppa_event_callbacks_t cbs = {
+        .on_trans_done = ppaDoneCallback,
+    };
+    ret = ppa_client_register_event_callbacks(ppa_yuv_to_rgb_, &cbs);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register PPA callback: %d", ret);
+        ppa_unregister_client(ppa_yuv_to_rgb_);
+        vSemaphoreDelete(ppa_done_sem_);
+        ppa_yuv_to_rgb_ = nullptr;
+        ppa_done_sem_ = nullptr;
         return false;
     }
 
@@ -464,6 +489,12 @@ void VideoStreamer::cleanup() {
     if (ppa_yuv_to_rgb_) {
         ppa_unregister_client(ppa_yuv_to_rgb_);
         ppa_yuv_to_rgb_ = nullptr;
+    }
+
+    // Clean up PPA semaphore
+    if (ppa_done_sem_) {
+        vSemaphoreDelete(ppa_done_sem_);
+        ppa_done_sem_ = nullptr;
     }
 }
 
@@ -712,6 +743,37 @@ bool VideoStreamer::shouldSkipFrame() const {
 }
 
 //=============================================================================
+// Test Processing (PSRAM Bandwidth Test)
+//=============================================================================
+
+uint32_t VideoStreamer::testProcessing() {
+    // Allocate test buffer in PSRAM on first call (640x360 YUV420)
+    static uint8_t* test_buffer = nullptr;
+    static const uint32_t test_size = 640 * 360 * 3 / 2;  // 345,600 bytes
+
+    if (!test_buffer) {
+        test_buffer = (uint8_t*)heap_caps_malloc(test_size, MALLOC_CAP_SPIRAM);
+        if (!test_buffer) {
+            ESP_LOGE(TAG, "Failed to allocate test buffer in PSRAM");
+            return 0;
+        }
+        // Fill with test pattern
+        memset(test_buffer, 0xAA, test_size);
+        ESP_LOGI(TAG, "Allocated %u byte test buffer in PSRAM", test_size);
+    }
+
+    // Read from PSRAM, do computation, but don't write back
+    // This creates PSRAM read contention with PPA
+    volatile uint32_t sum = 0;
+    for (uint32_t i = 0; i < test_size; i++) {
+        sum += test_buffer[i] * 2;  // PSRAM read + simple computation
+    }
+
+    // Result is discarded (volatile prevents optimization)
+    return sum;
+}
+
+//=============================================================================
 // CV Processing Hook (Phase 1: Placeholder)
 //=============================================================================
 
@@ -737,6 +799,20 @@ void VideoStreamer::processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t h
             rgb_data[idx + 2] = 0xff; // Red line at top
         }
     }
+}
+
+//=============================================================================
+// PPA Callback (ISR context)
+//=============================================================================
+
+bool VideoStreamer::ppaDoneCallback(ppa_client_handle_t ppa_client, ppa_event_data_t* event_data, void* user_data) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    SemaphoreHandle_t sem = (SemaphoreHandle_t)user_data;
+
+    // Signal completion from ISR context
+    xSemaphoreGiveFromISR(sem, &xHigherPriorityTaskWoken);
+
+    return (xHigherPriorityTaskWoken == pdTRUE);
 }
 
 //=============================================================================
@@ -868,7 +944,7 @@ void VideoStreamer::captureLoop() {
                     continue;
                 }
 #else
-                // Direct YUV→YUV scaling (no CV processing)
+                // Direct YUV→YUV scaling (no CV processing) - NON-BLOCKING mode
                 ppa_srm_oper_config_t yuv_scale_config = {
                     .in = {
                         .buffer = cap_buffer_[cam_buf.index],
@@ -902,15 +978,53 @@ void VideoStreamer::captureLoop() {
                     .byte_swap = false,
                     .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
                     .alpha_fix_val = 0,
-                    .mode = PPA_TRANS_MODE_BLOCKING,
-                    .user_data = nullptr,
+                    .mode = PPA_TRANS_MODE_NON_BLOCKING,  // NON-BLOCKING!
+                    .user_data = (void*)ppa_done_sem_,     // Pass semaphore to callback
                 };
 
+                // Submit PPA operation - returns immediately!
+                uint64_t ppa_start = esp_timer_get_time();
                 esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_scale_config);
                 if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "PPA YUV scaling failed: %d", ret);
+                    ESP_LOGE(TAG, "PPA YUV scaling submit failed: %d", ret);
                     ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
                     continue;
+                }
+
+                // === PPA is now running in hardware! ===
+                // Do test processing (reads 345KB from PSRAM)
+                // This will compete with PPA for PSRAM bandwidth
+                uint32_t sum = testProcessing();
+                uint64_t ppa_time0 = esp_timer_get_time() - ppa_start;
+
+                // Wait for PPA to complete (callback will give semaphore)
+                if (xSemaphoreTake(ppa_done_sem_, pdMS_TO_TICKS(100)) != pdTRUE) {
+                    ESP_LOGW(TAG, "PPA timeout! Skipping frame.");
+                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
+                    continue;
+                }
+                uint64_t ppa_time1 = esp_timer_get_time() - ppa_start;
+
+                // Log PPA timing every 50 frames
+                if (capture_frame_count_ % 50 == 0) {
+                    ESP_LOGI(TAG, "PPA time: %llu us %llu us %lu", ppa_time0, ppa_time1, sum);
+                }
+                // PPA completed! Output is ready in yuv_output_buffer_
+
+                // Return camera buffer
+                ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
+
+                // Update statistics
+                capture_frame_count_++;
+
+                // Check encoder input buffers (free up resources)
+                if (frames_in_encoder_ > 0) {
+                    memset(&enc_input_buf, 0, sizeof(enc_input_buf));
+                    enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+                    enc_input_buf.memory = V4L2_MEMORY_USERPTR;
+                    while (ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_input_buf) == 0) {
+                        frames_in_encoder_--;
+                    }
                 }
 #endif
 
@@ -955,7 +1069,6 @@ void VideoStreamer::captureLoop() {
             frameInfo.isKeyframe = keyframe;
 
             // Enable logging for every 5th frame
-            capture_frame_count_++;
             if (capture_frame_count_ % 5 == 0) {
                 g_log_frame_timing = true;
                 ESP_LOGI(TAG, "Frame %lu [%s] %u B - queuing (depth=%u)",
@@ -1031,9 +1144,9 @@ void VideoStreamer::sendLoop() {
     uint64_t send_frame_count = 0;
     uint64_t total_send_us = 0;
 
-    while (true) {
-        // Wait for frame (blocking)
-        if (xQueueReceive(send_queue_, &frame, portMAX_DELAY) == pdTRUE) {
+    while (running_) {
+        // Wait for frame with timeout so we can check running_ periodically
+        if (xQueueReceive(send_queue_, &frame, pdMS_TO_TICKS(100)) == pdTRUE) {
             if (!frame) continue;
 
             try {
@@ -1075,4 +1188,6 @@ void VideoStreamer::sendLoop() {
             delete frame;
         }
     }
+
+    ESP_LOGI(TAG, "Send task exiting");
 }
