@@ -28,6 +28,11 @@ extern "C" {
 #include "esp_heap_caps.h"
 }
 
+#ifdef VIDEO_SOURCE_JPEG_FILES
+#include "jpeg_decoder.hpp"
+#include "jpeg_frame_reader.hpp"
+#endif
+
 class VideoStreamer {
 public:
     // Constructor
@@ -115,10 +120,22 @@ private:
     uint32_t frames_in_encoder_;  // Pipeline depth tracker
     uint32_t frames_skipped_;     // Front-end skip counter
 
+#ifdef VIDEO_SOURCE_JPEG_FILES
+    // JPEG playback mode
+    std::unique_ptr<JpegFrameReader> jpeg_reader_;
+    std::unique_ptr<JpegDecoder> jpeg_decoder_;
+    std::vector<uint8_t> jpeg_buffer_;      // Read buffer
+    uint8_t* decoded_yuv_buffer_;           // JPEG decode output
+    size_t decoded_yuv_buffer_size_;
+#endif
+
     // Initialization
     bool initCamera();
     bool initEncoder();
     bool initPPA();
+#ifdef VIDEO_SOURCE_JPEG_FILES
+    bool initJpegMode();
+#endif
     void cleanup();
 
     // Internal start/stop (called by addTrack/removeTrack)

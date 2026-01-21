@@ -24,7 +24,7 @@
 // CV Pipeline Configuration
 // 0: Direct YUV→YUV downscaling (fastest, no CV processing)
 // 1: YUV→RGB→CV→RGB→YUV pipeline (enables computer vision)
-#define CV_PIPELINE 0
+#define CV_PIPELINE 1
 
 static const char* TAG = "VideoStreamer";
 
@@ -49,7 +49,11 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
       capture_task_(nullptr), send_task_(nullptr),
       running_(false), force_keyframe_(false),
       video_start_pts_(0), capture_frame_count_(0),
-      frames_in_encoder_(0), frames_skipped_(0) {
+      frames_in_encoder_(0), frames_skipped_(0)
+#ifdef VIDEO_SOURCE_JPEG_FILES
+      , decoded_yuv_buffer_(nullptr), decoded_yuv_buffer_size_(0)
+#endif
+{
 
     for (int i = 0; i < CAM_BUFFER_COUNT; i++) {
         cap_buffer_[i] = nullptr;
@@ -439,6 +443,45 @@ bool VideoStreamer::initPPA() {
 #endif
 }
 
+#ifdef VIDEO_SOURCE_JPEG_FILES
+bool VideoStreamer::initJpegMode() {
+    ESP_LOGI(TAG, "Initializing JPEG playback mode...");
+
+    // Create JPEG frame reader
+    jpeg_reader_ = std::make_unique<JpegFrameReader>("/littlefs/frames");
+    if (!jpeg_reader_->init()) {
+        ESP_LOGE(TAG, "Failed to initialize JPEG frame reader");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Found %zu JPEG frames", jpeg_reader_->getFrameCount());
+
+    // Create JPEG decoder
+    jpeg_decoder_ = std::make_unique<JpegDecoder>();
+
+    // Allocate buffer for decoded YUV data
+    // Maximum expected JPEG size: assume up to 1920x1080 for safety
+    // YUV420 = width * height * 1.5 bytes
+    decoded_yuv_buffer_size_ = 1920 * 1080 * 3 / 2;
+    decoded_yuv_buffer_ = (uint8_t*)heap_caps_malloc(decoded_yuv_buffer_size_,
+                                                      MALLOC_CAP_DMA | MALLOC_CAP_SPIRAM);
+    if (!decoded_yuv_buffer_) {
+        ESP_LOGE(TAG, "Failed to allocate decoded YUV buffer (%zu bytes)", decoded_yuv_buffer_size_);
+        return false;
+    }
+
+    bool buffer_in_psram = esp_ptr_external_ram(decoded_yuv_buffer_);
+    ESP_LOGI(TAG, "JPEG decode buffer: %zu bytes in %s",
+             decoded_yuv_buffer_size_, buffer_in_psram ? "PSRAM" : "INTERNAL RAM");
+
+    // Set use_ppa_ to false initially - will be determined per frame based on decoded size
+    use_ppa_ = false;
+
+    ESP_LOGI(TAG, "JPEG playback mode initialized successfully");
+    return true;
+}
+#endif
+
 void VideoStreamer::cleanup() {
     // Unmap camera buffers
     for (int i = 0; i < CAM_BUFFER_COUNT; i++) {
@@ -496,6 +539,18 @@ void VideoStreamer::cleanup() {
         vSemaphoreDelete(ppa_done_sem_);
         ppa_done_sem_ = nullptr;
     }
+
+#ifdef VIDEO_SOURCE_JPEG_FILES
+    // Clean up JPEG mode resources
+    if (decoded_yuv_buffer_) {
+        heap_caps_free(decoded_yuv_buffer_);
+        decoded_yuv_buffer_ = nullptr;
+        decoded_yuv_buffer_size_ = 0;
+    }
+
+    jpeg_decoder_.reset();
+    jpeg_reader_.reset();
+#endif
 }
 
 //=============================================================================
@@ -567,11 +622,19 @@ bool VideoStreamer::startStreaming() {
 
     ESP_LOGI(TAG, "Starting video streamer: %dx%d @ %d fps", getWidth(), getHeight(), fps_);
 
-    // Initialize camera and encoder
+#ifdef VIDEO_SOURCE_CAMERA
+    // Initialize camera
     if (!initCamera()) {
         ESP_LOGE(TAG, "Failed to initialize camera");
         return false;
     }
+#elif defined(VIDEO_SOURCE_JPEG_FILES)
+    // JPEG mode will be lazily initialized in captureLoop (which has Internal RAM stack)
+    // Cannot initialize here - this is called from libdatachannel threadpool with PSRAM stack
+    ESP_LOGI(TAG, "Using JPEG playback mode (will initialize in capture task)");
+#else
+    #error "No video source defined. Define VIDEO_SOURCE_CAMERA or VIDEO_SOURCE_JPEG_FILES"
+#endif
 
     if (!initEncoder()) {
         ESP_LOGE(TAG, "Failed to initialize encoder");
@@ -594,14 +657,16 @@ bool VideoStreamer::startStreaming() {
     }
 
     // Start device streams
+#ifdef VIDEO_SOURCE_CAMERA
     int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(cap_fd_, VIDIOC_STREAMON, &type) < 0) {
         ESP_LOGE(TAG, "Failed to start camera stream");
         cleanup();
         return false;
     }
+#endif
 
-    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(m2m_fd_, VIDIOC_STREAMON, &type) < 0) {
         ESP_LOGE(TAG, "Failed to start encoder capture stream");
         cleanup();
@@ -822,10 +887,30 @@ bool VideoStreamer::ppaDoneCallback(ppa_client_handle_t ppa_client, ppa_event_da
 void VideoStreamer::captureLoop() {
     ESP_LOGI(TAG, "Capture loop started (pipelined mode, %d encoder buffers)", ENCODER_OUTPUT_BUFFERS);
 
+#ifdef VIDEO_SOURCE_CAMERA
     struct v4l2_buffer cam_buf, enc_input_buf, enc_output_buf;
+#else
+    struct v4l2_buffer enc_input_buf, enc_output_buf;
+#endif
     uint64_t last_stats_time = esp_timer_get_time();
 
+#ifdef VIDEO_SOURCE_JPEG_FILES
+    // Lazy initialization for JPEG mode
+    // Must happen here (not in startStreaming) because this task has Internal RAM stack
+    // and can safely access flash (opendir/readdir for LittleFS)
+    if (!jpeg_reader_) {
+        ESP_LOGI(TAG, "Initializing JPEG mode (lazy init in capture task)");
+        if (!initJpegMode()) {
+            ESP_LOGE(TAG, "JPEG mode initialization failed - exiting capture loop");
+            running_ = false;
+            return;
+        }
+        ESP_LOGI(TAG, "JPEG mode initialized successfully");
+    }
+#endif
+
     while (running_) {
+#ifdef VIDEO_SOURCE_CAMERA
         // Try to submit camera frames to encoder (non-blocking pipeline feed)
         if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
             memset(&cam_buf, 0, sizeof(cam_buf));
@@ -1046,7 +1131,249 @@ void VideoStreamer::captureLoop() {
                 ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
             }
         }
+#elif defined(VIDEO_SOURCE_JPEG_FILES)
+        // JPEG playback mode: read JPEG, decode, optionally scale, encode
 
+        // Check for backpressure (front-end skip)
+        if (shouldSkipFrame()) {
+            frames_skipped_++;
+            ESP_LOGI(TAG, "Skipped frame (queue depth=%u)",
+                     uxQueueMessagesWaiting(send_queue_));
+            vTaskDelay(pdMS_TO_TICKS(10));
+            continue;
+        }
+
+        // 1. Read next JPEG file
+        if (!jpeg_reader_->readNextFrame(jpeg_buffer_)) {
+            ESP_LOGE(TAG, "Failed to read JPEG frame");
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+
+        // 2. Decode JPEG to YUV420
+        static bool logged_resolution = false;
+        uint32_t decoded_width, decoded_height;
+        if (!jpeg_decoder_->decode(jpeg_buffer_.data(), jpeg_buffer_.size(),
+                                   decoded_yuv_buffer_, decoded_yuv_buffer_size_,
+                                   &decoded_width, &decoded_height)) {
+            ESP_LOGE(TAG, "JPEG decode failed");
+            continue;
+        }
+
+        // Log decoded resolution (first frame only)
+        if (!logged_resolution) {
+            ESP_LOGI(TAG, "JPEG decoded: %ux%u -> CV pipeline: YUV→RGB→CV→RGB→YUV → %ux%u",
+                     decoded_width, decoded_height, output_width_, output_height_);
+            logged_resolution = true;
+        }
+
+        // 3. CV Pipeline (3-stage): YUV420 → RGB888 → CV → RGB888 → YUV420
+
+        // Stage 1: YUV420 → RGB888 (with scaling to output resolution)
+        ppa_srm_oper_config_t yuv_to_rgb_config = {
+            .in = {
+                .buffer = decoded_yuv_buffer_,
+                .pic_w = decoded_width,
+                .pic_h = decoded_height,
+                .block_w = decoded_width,
+                .block_h = decoded_height,
+                .block_offset_x = 0,
+                .block_offset_y = 0,
+                .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+                .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+            },
+            .out = {
+                .buffer = rgb_buffer_,
+                .buffer_size = rgb_buffer_size_,
+                .pic_w = output_width_,
+                .pic_h = output_height_,
+                .block_offset_x = 0,
+                .block_offset_y = 0,
+                .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
+                .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+            },
+            .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+            .scale_x = (float)output_width_ / (float)decoded_width,
+            .scale_y = (float)output_height_ / (float)decoded_height,
+            .mirror_x = false,
+            .mirror_y = false,
+            .rgb_swap = false,
+            .byte_swap = false,
+            .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+            .alpha_fix_val = 0,
+            .mode = PPA_TRANS_MODE_BLOCKING,
+            .user_data = nullptr,
+        };
+
+        esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_to_rgb_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "PPA YUV→RGB failed: %d", ret);
+            continue;
+        }
+
+        // Stage 2: CV processing on RGB888 buffer
+        processCVFrame(rgb_buffer_, output_width_, output_height_);
+
+        // Stage 3: RGB888 → YUV420
+        ppa_srm_oper_config_t rgb_to_yuv_config = {
+            .in = {
+                .buffer = rgb_buffer_,
+                .pic_w = output_width_,
+                .pic_h = output_height_,
+                .block_w = output_width_,
+                .block_h = output_height_,
+                .block_offset_x = 0,
+                .block_offset_y = 0,
+                .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
+                .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+            },
+            .out = {
+                .buffer = yuv_output_buffer_,
+                .buffer_size = yuv_output_buffer_size_,
+                .pic_w = output_width_,
+                .pic_h = output_height_,
+                .block_offset_x = 0,
+                .block_offset_y = 0,
+                .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+                .yuv_range = PPA_COLOR_RANGE_LIMIT,
+                .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+            },
+            .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+            .scale_x = 1.0f,  // No scaling (already at output size)
+            .scale_y = 1.0f,
+            .mirror_x = false,
+            .mirror_y = false,
+            .rgb_swap = false,
+            .byte_swap = false,
+            .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+            .alpha_fix_val = 0,
+            .mode = PPA_TRANS_MODE_BLOCKING,
+            .user_data = nullptr,
+        };
+
+        ret = ppa_do_scale_rotate_mirror(ppa_rgb_to_yuv_, &rgb_to_yuv_config);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "PPA RGB→YUV failed: %d", ret);
+            continue;
+        }
+
+        // Use the converted YUV buffer for encoding
+        uint8_t* encoder_input_yuv = yuv_output_buffer_;
+        size_t encoder_input_size = yuv_output_buffer_size_;
+
+        // 4. Submit to encoder
+        memset(&enc_input_buf, 0, sizeof(enc_input_buf));
+        enc_input_buf.index = 0;
+        enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        enc_input_buf.memory = V4L2_MEMORY_USERPTR;
+        enc_input_buf.m.userptr = (unsigned long)encoder_input_yuv;
+        enc_input_buf.length = encoder_input_size;
+
+        if (ioctl(m2m_fd_, VIDIOC_QBUF, &enc_input_buf) != 0) {
+            ESP_LOGE(TAG, "Failed to queue frame to encoder: %s", strerror(errno));
+            continue;
+        }
+
+        // 5. Get encoded frame (blocking wait)
+        memset(&enc_output_buf, 0, sizeof(enc_output_buf));
+        enc_output_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        enc_output_buf.memory = V4L2_MEMORY_MMAP;
+
+        if (ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_output_buf) != 0) {
+            ESP_LOGE(TAG, "Failed to dequeue encoded frame: %s", strerror(errno));
+            // Clean up encoder input
+            memset(&enc_input_buf, 0, sizeof(enc_input_buf));
+            enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+            enc_input_buf.memory = V4L2_MEMORY_USERPTR;
+            ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_input_buf);
+            continue;
+        }
+
+        // 6. Create frame info with current time PTS
+        uint64_t timestamp_us = esp_timer_get_time();
+        bool keyframe = (enc_output_buf.flags & V4L2_BUF_FLAG_KEYFRAME) != 0;
+
+        // Initialize PTS on first frame
+        if (video_start_pts_ == 0) {
+            video_start_pts_ = timestamp_us;
+        }
+
+        // Calculate relative PTS
+        double pts_sec = (timestamp_us - video_start_pts_) / 1000000.0;
+        std::chrono::duration<double> frameTime(pts_sec);
+        rtc::FrameInfo frameInfo(frameTime);
+        frameInfo.isKeyframe = keyframe;
+
+        // Update frame counter
+        capture_frame_count_++;
+
+        // Enable logging for every 5th frame
+        if (capture_frame_count_ % 5 == 0) {
+            g_log_frame_timing = true;
+            ESP_LOGI(TAG, "Frame %lu [%s] %u B - queuing (depth=%u)",
+                     (unsigned long)capture_frame_count_, keyframe ? "I" : "P",
+                     enc_output_buf.bytesused, uxQueueMessagesWaiting(send_queue_));
+        }
+
+        // 7. Allocate and queue frame (will be deleted by send task)
+        QueuedFrame* frame = new QueuedFrame{
+            std::vector<uint8_t>(m2m_cap_buffer_[enc_output_buf.index],
+                                 m2m_cap_buffer_[enc_output_buf.index] + enc_output_buf.bytesused),
+            frameInfo
+        };
+
+        if (xQueueSend(send_queue_, &frame, 0) != pdTRUE) {
+            ESP_LOGW(TAG, "Send queue full despite front-end skip!");
+            delete frame;
+        }
+
+        // Disable logging
+        if (capture_frame_count_ % 5 == 0) {
+            g_log_frame_timing = false;
+        }
+
+        // Return encoder buffers
+        ioctl(m2m_fd_, VIDIOC_QBUF, &enc_output_buf);
+
+        memset(&enc_input_buf, 0, sizeof(enc_input_buf));
+        enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+        enc_input_buf.memory = V4L2_MEMORY_USERPTR;
+        ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_input_buf);
+
+        // Print statistics periodically
+        uint64_t current_time = esp_timer_get_time();
+        if ((current_time - last_stats_time) >= 1000000) {  // Every second
+            uint64_t elapsed_us = current_time - video_start_pts_;
+            float elapsed_sec = elapsed_us / 1000000.0f;
+            float avg_fps = capture_frame_count_ / elapsed_sec;
+
+            ESP_LOGI(TAG, "JPEG Frame %lu: %.1f fps (avg), %u skipped, %zu/%zu files",
+                     (unsigned long)capture_frame_count_, avg_fps, frames_skipped_,
+                     jpeg_reader_->getCurrentIndex(), jpeg_reader_->getFrameCount());
+            last_stats_time = current_time;
+        }
+
+        // Frame rate limiting for JPEG mode
+        // Target: 3 fps = 333ms per frame
+        static const uint32_t target_fps = 3;
+        static const uint32_t frame_interval_ms = 1000 / target_fps;  // 333ms
+        static uint64_t last_frame_time = 0;
+
+        if (last_frame_time > 0) {
+            uint64_t now = esp_timer_get_time() / 1000;  // Convert to ms
+            uint64_t elapsed_ms = now - last_frame_time;
+            if (elapsed_ms < frame_interval_ms) {
+                uint32_t sleep_ms = frame_interval_ms - elapsed_ms;
+                vTaskDelay(pdMS_TO_TICKS(sleep_ms));
+            }
+        }
+        last_frame_time = esp_timer_get_time() / 1000;  // Update after delay
+#endif
+
+#ifdef VIDEO_SOURCE_CAMERA
         // Try to get encoded frames (non-blocking retrieval)
         memset(&enc_output_buf, 0, sizeof(enc_output_buf));
         enc_output_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -1117,11 +1444,14 @@ void VideoStreamer::captureLoop() {
                 last_stats_time = current_time;
             }
         }
+#endif
 
+#ifdef VIDEO_SOURCE_CAMERA
         // Small delay if encoder pipeline is empty
         if (frames_in_encoder_ == 0) {
             vTaskDelay(pdMS_TO_TICKS(1));
         }
+#endif
     }
 
     ESP_LOGI(TAG, "Capture loop exited");
