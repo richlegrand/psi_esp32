@@ -192,7 +192,8 @@ WebRTCServer::WebRTCServer(const std::string& uid, const std::string& server_url
     // Output: 640x360 @ 25fps
     // Camera resolution auto-detected (set via menuconfig: 1280x720 or 1920x1080)
     // PPA scaling automatically enabled if output != camera
-    video_streamer_ = std::make_unique<VideoStreamer>(640, 360, 25);
+    // CV pipeline disabled by default (pass true as 4th param to enable YUV→RGB→CV→YUV pipeline)
+    video_streamer_ = std::make_unique<VideoStreamer>(640, 360, 25, true);
 }
 
 WebRTCServer::~WebRTCServer() {

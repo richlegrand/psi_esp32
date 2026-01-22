@@ -40,7 +40,8 @@ public:
     //   - Camera resolution is auto-detected from sensor (via menuconfig setting)
     //   - PPA scaling automatically enabled if output != camera resolution
     // fps: Frame rate
-    VideoStreamer(uint32_t output_width, uint32_t output_height, uint32_t fps = 25);
+    // enable_cv: Enable CV pipeline (YUV→RGB→CV→RGB→YUV) vs direct scaling (YUV→YUV)
+    VideoStreamer(uint32_t output_width, uint32_t output_height, uint32_t fps = 25, bool enable_cv = false);
     ~VideoStreamer();
 
     // Add a track to send video to
@@ -68,6 +69,7 @@ private:
     uint32_t output_height_;
     uint32_t fps_;
     bool use_ppa_;             // True if PPA scaling needed (output != camera)
+    bool cv_pipeline_enabled_; // True to use YUV→RGB→CV→YUV pipeline, false for direct YUV→YUV
 
     // Device file descriptors
     int cap_fd_;       // Camera capture device

@@ -21,11 +21,6 @@
 #define CAMERA_DEV_PATH   "/dev/video0"   // MIPI-CSI camera
 #define ENCODER_DEV_PATH  "/dev/video11"  // H.264 encoder
 
-// CV Pipeline Configuration
-// 0: Direct YUV→YUV downscaling (fastest, no CV processing)
-// 1: YUV→RGB→CV→RGB→YUV pipeline (enables computer vision)
-#define CV_PIPELINE 1
-
 static const char* TAG = "VideoStreamer";
 
 // Global flag for frame timing logs (synchronized with h264rtppacketizer)
@@ -35,11 +30,12 @@ extern bool g_log_frame_timing;
 // Constructor / Destructor
 //=============================================================================
 
-VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint32_t fps)
+VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint32_t fps, bool enable_cv)
     : cam_width_(0), cam_height_(0),  // Will be auto-detected from sensor
       output_width_(output_width), output_height_(output_height),
       fps_(fps),
       use_ppa_(false),  // Determined after querying sensor
+      cv_pipeline_enabled_(enable_cv),
       cap_fd_(-1), m2m_fd_(-1),
       ppa_yuv_to_rgb_(nullptr), ppa_rgb_to_yuv_(nullptr),
       rgb_buffer_(nullptr), rgb_buffer_size_(0),
@@ -300,8 +296,8 @@ bool VideoStreamer::initEncoder() {
 }
 
 bool VideoStreamer::initPPA() {
-#if CV_PIPELINE
-    ESP_LOGI(TAG, "Initializing dual PPA pipeline for CV processing...");
+    if (cv_pipeline_enabled_) {
+        ESP_LOGI(TAG, "Initializing dual PPA pipeline for CV processing...");
     size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
 
     // Register PPA client #1: YUV420 → RGB888 (with optional scaling)
@@ -372,13 +368,13 @@ bool VideoStreamer::initPPA() {
              rgb_buffer_size_, rgb_in_psram ? "PSRAM" : "INTERNAL RAM");
     ESP_LOGI(TAG, "  YUV buffer: %zu bytes in %s",
              yuv_output_buffer_size_, yuv_in_psram ? "PSRAM" : "INTERNAL RAM");
-    ESP_LOGI(TAG, "  Internal RAM used: %zu bytes (for DMA descriptors)",
-             internal_before - internal_after);
+        ESP_LOGI(TAG, "  Internal RAM used: %zu bytes (for DMA descriptors)",
+                 internal_before - internal_after);
 
-    return true;
-#else
-    // Direct YUV→YUV scaling mode (no CV pipeline)
-    ESP_LOGI(TAG, "Initializing PPA for direct YUV downscaling (NON-BLOCKING)...");
+        return true;
+    } else {
+        // Direct YUV→YUV scaling mode (no CV pipeline)
+        ESP_LOGI(TAG, "Initializing PPA for direct YUV downscaling (NON-BLOCKING)...");
     size_t internal_before = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
 
     // Create semaphore for PPA completion signaling
@@ -436,11 +432,11 @@ bool VideoStreamer::initPPA() {
              cam_width_, cam_height_, output_width_, output_height_);
     ESP_LOGI(TAG, "  YUV buffer: %zu bytes in %s",
              yuv_output_buffer_size_, yuv_in_psram ? "PSRAM" : "INTERNAL RAM");
-    ESP_LOGI(TAG, "  Internal RAM used: %zu bytes (for DMA descriptors)",
-             internal_before - internal_after);
+        ESP_LOGI(TAG, "  Internal RAM used: %zu bytes (for DMA descriptors)",
+                 internal_before - internal_after);
 
-    return true;
-#endif
+        return true;
+    }
 }
 
 #ifdef VIDEO_SOURCE_JPEG_FILES
@@ -510,18 +506,18 @@ void VideoStreamer::cleanup() {
     }
 
     // Free PPA resources
-#if CV_PIPELINE
-    if (rgb_buffer_) {
-        heap_caps_free(rgb_buffer_);
-        rgb_buffer_ = nullptr;
-        rgb_buffer_size_ = 0;
-    }
+    if (cv_pipeline_enabled_) {
+        if (rgb_buffer_) {
+            heap_caps_free(rgb_buffer_);
+            rgb_buffer_ = nullptr;
+            rgb_buffer_size_ = 0;
+        }
 
-    if (ppa_rgb_to_yuv_) {
-        ppa_unregister_client(ppa_rgb_to_yuv_);
-        ppa_rgb_to_yuv_ = nullptr;
+        if (ppa_rgb_to_yuv_) {
+            ppa_unregister_client(ppa_rgb_to_yuv_);
+            ppa_rgb_to_yuv_ = nullptr;
+        }
     }
-#endif
 
     if (yuv_output_buffer_) {
         heap_caps_free(yuv_output_buffer_);
@@ -657,8 +653,9 @@ bool VideoStreamer::startStreaming() {
     }
 
     // Start device streams
+    int type;
 #ifdef VIDEO_SOURCE_CAMERA
-    int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(cap_fd_, VIDIOC_STREAMON, &type) < 0) {
         ESP_LOGE(TAG, "Failed to start camera stream");
         cleanup();
@@ -666,7 +663,7 @@ bool VideoStreamer::startStreaming() {
     }
 #endif
 
-    int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(m2m_fd_, VIDIOC_STREAMON, &type) < 0) {
         ESP_LOGE(TAG, "Failed to start encoder capture stream");
         cleanup();
@@ -934,10 +931,10 @@ void VideoStreamer::captureLoop() {
                 // Direct mode: YUV→YUV scaling (1-stage)
                 // Both modes output to yuv_output_buffer_
 
-#if CV_PIPELINE
-                // CV Pipeline: 3-stage conversion with RGB intermediate
-                // Stage 1: YUV420 → RGB888
-                ppa_srm_oper_config_t yuv_to_rgb_config = {
+                if (cv_pipeline_enabled_) {
+                    // CV Pipeline: 3-stage conversion with RGB intermediate
+                    // Stage 1: YUV420 → RGB888
+                    ppa_srm_oper_config_t yuv_to_rgb_config = {
                     .in = {
                         .buffer = cap_buffer_[cam_buf.index],
                         .pic_w = cam_width_,
@@ -1028,9 +1025,15 @@ void VideoStreamer::captureLoop() {
                     ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
                     continue;
                 }
-#else
-                // Direct YUV→YUV scaling (no CV processing) - NON-BLOCKING mode
-                ppa_srm_oper_config_t yuv_scale_config = {
+
+                // Return camera buffer
+                ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
+
+                    // Update frame counter
+                    capture_frame_count_++;
+                } else {
+                    // Direct YUV→YUV scaling (no CV processing) - NON-BLOCKING mode
+                    ppa_srm_oper_config_t yuv_scale_config = {
                     .in = {
                         .buffer = cap_buffer_[cam_buf.index],
                         .pic_w = cam_width_,
@@ -1111,7 +1114,7 @@ void VideoStreamer::captureLoop() {
                         frames_in_encoder_--;
                     }
                 }
-#endif
+                }
 
                 // Submit to encoder (both paths output to yuv_output_buffer_)
                 memset(&enc_input_buf, 0, sizeof(enc_input_buf));
