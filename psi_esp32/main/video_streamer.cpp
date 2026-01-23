@@ -13,6 +13,8 @@
 #include "esp_cam_sensor_types.h"
 #include <cstring>
 #include <unistd.h>
+#include <dirent.h>
+#include <strings.h>
 
 // libdatachannel headers
 #include "rtc/frameinfo.hpp"
@@ -27,6 +29,52 @@ static const char* TAG = "VideoStreamer";
 extern bool g_log_frame_timing;
 
 //=============================================================================
+// Video Source Detection
+//=============================================================================
+
+VideoSource VideoStreamer::detectVideoSource() {
+    // Check if /littlefs/frames directory exists
+    DIR* dir = opendir("/littlefs/frames");
+    if (!dir) {
+        ESP_LOGI(TAG, "No /littlefs/frames directory found, using camera");
+        return VideoSource::CAMERA;
+    }
+
+    // Check if directory contains any JPEG files
+    bool has_jpegs = false;
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        const char* name = entry->d_name;
+        size_t len = strlen(name);
+
+        // Check for .jpg or .jpeg extension (case-insensitive)
+        if (len > 4) {
+            const char* ext = name + len - 4;
+            if (strcasecmp(ext, ".jpg") == 0) {
+                has_jpegs = true;
+                break;
+            }
+        }
+        if (len > 5) {
+            const char* ext = name + len - 5;
+            if (strcasecmp(ext, ".jpeg") == 0) {
+                has_jpegs = true;
+                break;
+            }
+        }
+    }
+    closedir(dir);
+
+    if (has_jpegs) {
+        ESP_LOGI(TAG, "Found JPEG files in /littlefs/frames, using JPEG playback mode");
+        return VideoSource::JPEG_FILES;
+    } else {
+        ESP_LOGI(TAG, "No JPEG files found in /littlefs/frames, using camera");
+        return VideoSource::CAMERA;
+    }
+}
+
+//=============================================================================
 // Constructor / Destructor
 //=============================================================================
 
@@ -36,6 +84,7 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
       fps_(fps),
       use_ppa_(false),  // Determined after querying sensor
       cv_pipeline_enabled_(enable_cv),
+      video_source_(VideoSource::CAMERA),  // Will be detected below
       cap_fd_(-1), m2m_fd_(-1),
       ppa_yuv_to_rgb_(nullptr), ppa_rgb_to_yuv_(nullptr),
       rgb_buffer_(nullptr), rgb_buffer_size_(0),
@@ -45,12 +94,9 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
       capture_task_(nullptr), send_task_(nullptr),
       running_(false), force_keyframe_(false),
       video_start_pts_(0), capture_frame_count_(0),
-      frames_in_encoder_(0), frames_skipped_(0)
-#ifdef VIDEO_SOURCE_JPEG_FILES
-      , decoded_yuv_buffer_(nullptr), decoded_yuv_buffer_size_(0)
-#endif
+      frames_in_encoder_(0), frames_skipped_(0),
+      decoded_yuv_buffer_(nullptr), decoded_yuv_buffer_size_(0)
 {
-
     for (int i = 0; i < CAM_BUFFER_COUNT; i++) {
         cap_buffer_[i] = nullptr;
         cap_buffer_len_[i] = 0;
@@ -60,6 +106,9 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
         m2m_cap_buffer_[i] = nullptr;
         m2m_cap_buffer_len_[i] = 0;
     }
+
+    // Detect video source at runtime (lightweight - just checks directory)
+    video_source_ = detectVideoSource();
 }
 
 VideoStreamer::~VideoStreamer() {
@@ -439,7 +488,6 @@ bool VideoStreamer::initPPA() {
     }
 }
 
-#ifdef VIDEO_SOURCE_JPEG_FILES
 bool VideoStreamer::initJpegMode() {
     ESP_LOGI(TAG, "Initializing JPEG playback mode...");
 
@@ -476,20 +524,22 @@ bool VideoStreamer::initJpegMode() {
     ESP_LOGI(TAG, "JPEG playback mode initialized successfully");
     return true;
 }
-#endif
 
 void VideoStreamer::cleanup() {
-    // Unmap camera buffers
-    for (int i = 0; i < CAM_BUFFER_COUNT; i++) {
-        if (cap_buffer_[i] && cap_buffer_[i] != MAP_FAILED) {
-            munmap(cap_buffer_[i], cap_buffer_len_[i]);
-            cap_buffer_[i] = nullptr;
+    // Clean up camera resources (only if camera mode)
+    if (video_source_ == VideoSource::CAMERA) {
+        // Unmap camera buffers
+        for (int i = 0; i < CAM_BUFFER_COUNT; i++) {
+            if (cap_buffer_[i] && cap_buffer_[i] != MAP_FAILED) {
+                munmap(cap_buffer_[i], cap_buffer_len_[i]);
+                cap_buffer_[i] = nullptr;
+            }
         }
-    }
 
-    if (cap_fd_ >= 0) {
-        ::close(cap_fd_);
-        cap_fd_ = -1;
+        if (cap_fd_ >= 0) {
+            ::close(cap_fd_);
+            cap_fd_ = -1;
+        }
     }
 
     // Unmap encoder buffers
@@ -536,17 +586,17 @@ void VideoStreamer::cleanup() {
         ppa_done_sem_ = nullptr;
     }
 
-#ifdef VIDEO_SOURCE_JPEG_FILES
-    // Clean up JPEG mode resources
-    if (decoded_yuv_buffer_) {
-        heap_caps_free(decoded_yuv_buffer_);
-        decoded_yuv_buffer_ = nullptr;
-        decoded_yuv_buffer_size_ = 0;
-    }
+    // Clean up JPEG mode resources (only if JPEG mode)
+    if (video_source_ == VideoSource::JPEG_FILES) {
+        if (decoded_yuv_buffer_) {
+            heap_caps_free(decoded_yuv_buffer_);
+            decoded_yuv_buffer_ = nullptr;
+            decoded_yuv_buffer_size_ = 0;
+        }
 
-    jpeg_decoder_.reset();
-    jpeg_reader_.reset();
-#endif
+        jpeg_decoder_.reset();
+        jpeg_reader_.reset();
+    }
 }
 
 //=============================================================================
@@ -618,19 +668,17 @@ bool VideoStreamer::startStreaming() {
 
     ESP_LOGI(TAG, "Starting video streamer: %dx%d @ %d fps", getWidth(), getHeight(), fps_);
 
-#ifdef VIDEO_SOURCE_CAMERA
-    // Initialize camera
-    if (!initCamera()) {
-        ESP_LOGE(TAG, "Failed to initialize camera");
-        return false;
+    // Initialize camera if camera mode detected
+    if (video_source_ == VideoSource::CAMERA) {
+        if (!initCamera()) {
+            ESP_LOGE(TAG, "Failed to initialize camera");
+            return false;
+        }
+    } else {
+        // JPEG mode will be lazily initialized in captureLoop (which has Internal RAM stack)
+        // Cannot initialize here - this is called from libdatachannel threadpool with PSRAM stack
+        ESP_LOGI(TAG, "Using JPEG playback mode (will initialize in capture task)");
     }
-#elif defined(VIDEO_SOURCE_JPEG_FILES)
-    // JPEG mode will be lazily initialized in captureLoop (which has Internal RAM stack)
-    // Cannot initialize here - this is called from libdatachannel threadpool with PSRAM stack
-    ESP_LOGI(TAG, "Using JPEG playback mode (will initialize in capture task)");
-#else
-    #error "No video source defined. Define VIDEO_SOURCE_CAMERA or VIDEO_SOURCE_JPEG_FILES"
-#endif
 
     if (!initEncoder()) {
         ESP_LOGE(TAG, "Failed to initialize encoder");
@@ -654,15 +702,18 @@ bool VideoStreamer::startStreaming() {
 
     // Start device streams
     int type;
-#ifdef VIDEO_SOURCE_CAMERA
-    type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if (ioctl(cap_fd_, VIDIOC_STREAMON, &type) < 0) {
-        ESP_LOGE(TAG, "Failed to start camera stream");
-        cleanup();
-        return false;
-    }
-#endif
 
+    // Start camera stream if camera mode
+    if (video_source_ == VideoSource::CAMERA) {
+        type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        if (ioctl(cap_fd_, VIDIOC_STREAMON, &type) < 0) {
+            ESP_LOGE(TAG, "Failed to start camera stream");
+            cleanup();
+            return false;
+        }
+    }
+
+    // Start encoder streams (common to both camera and JPEG modes)
     type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(m2m_fd_, VIDIOC_STREAMON, &type) < 0) {
         ESP_LOGE(TAG, "Failed to start encoder capture stream");
@@ -884,19 +935,14 @@ bool VideoStreamer::ppaDoneCallback(ppa_client_handle_t ppa_client, ppa_event_da
 void VideoStreamer::captureLoop() {
     ESP_LOGI(TAG, "Capture loop started (pipelined mode, %d encoder buffers)", ENCODER_OUTPUT_BUFFERS);
 
-#ifdef VIDEO_SOURCE_CAMERA
     struct v4l2_buffer cam_buf, enc_input_buf, enc_output_buf;
-#else
-    struct v4l2_buffer enc_input_buf, enc_output_buf;
-#endif
     uint64_t last_stats_time = esp_timer_get_time();
 
-#ifdef VIDEO_SOURCE_JPEG_FILES
     // Lazy initialization for JPEG mode
     // Must happen here (not in startStreaming) because this task has Internal RAM stack
     // and can safely access flash (opendir/readdir for LittleFS)
-    if (!jpeg_reader_) {
-        ESP_LOGI(TAG, "Initializing JPEG mode (lazy init in capture task)");
+    if (video_source_ == VideoSource::JPEG_FILES && !jpeg_reader_) {
+        ESP_LOGI(TAG, "Lazy init JPEG mode (Internal RAM stack - safe for flash I/O)");
         if (!initJpegMode()) {
             ESP_LOGE(TAG, "JPEG mode initialization failed - exiting capture loop");
             running_ = false;
@@ -904,10 +950,9 @@ void VideoStreamer::captureLoop() {
         }
         ESP_LOGI(TAG, "JPEG mode initialized successfully");
     }
-#endif
 
     while (running_) {
-#ifdef VIDEO_SOURCE_CAMERA
+        if (video_source_ == VideoSource::CAMERA) {
         // Try to submit camera frames to encoder (non-blocking pipeline feed)
         if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
             memset(&cam_buf, 0, sizeof(cam_buf));
@@ -1134,8 +1179,8 @@ void VideoStreamer::captureLoop() {
                 ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
             }
         }
-#elif defined(VIDEO_SOURCE_JPEG_FILES)
-        // JPEG playback mode: read JPEG, decode, optionally scale, encode
+        } else {  // VideoSource::JPEG_FILES
+            // JPEG playback mode: read JPEG, decode, optionally scale, encode
 
         // Check for backpressure (front-end skip)
         if (shouldSkipFrame()) {
@@ -1374,10 +1419,10 @@ void VideoStreamer::captureLoop() {
             }
         }
         last_frame_time = esp_timer_get_time() / 1000;  // Update after delay
-#endif
+        }
 
-#ifdef VIDEO_SOURCE_CAMERA
         // Try to get encoded frames (non-blocking retrieval)
+        if (video_source_ == VideoSource::CAMERA) {
         memset(&enc_output_buf, 0, sizeof(enc_output_buf));
         enc_output_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         enc_output_buf.memory = V4L2_MEMORY_MMAP;
@@ -1447,14 +1492,12 @@ void VideoStreamer::captureLoop() {
                 last_stats_time = current_time;
             }
         }
-#endif
+        }
 
-#ifdef VIDEO_SOURCE_CAMERA
-        // Small delay if encoder pipeline is empty
-        if (frames_in_encoder_ == 0) {
+        // Small delay if encoder pipeline is empty (camera mode only)
+        if (video_source_ == VideoSource::CAMERA && frames_in_encoder_ == 0) {
             vTaskDelay(pdMS_TO_TICKS(1));
         }
-#endif
     }
 
     ESP_LOGI(TAG, "Capture loop exited");

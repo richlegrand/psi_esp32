@@ -1,12 +1,12 @@
 # Base sources - always compile both camera and JPEG support
-# Actual mode selected at runtime via compile definitions
+# Actual mode auto-detected at runtime (checks /littlefs/frames directory)
 set(SRCS
     "psi_main.cpp"
     "httpd_server.cpp"
     "httpd_test.c"
     "video_streamer.cpp"
-    "jpeg_decoder.cpp"           # JPEG decoder (only used if VIDEO_SOURCE_JPEG_FILES defined)
-    "jpeg_frame_reader.cpp"      # JPEG frame reader (only used if VIDEO_SOURCE_JPEG_FILES defined)
+    "jpeg_decoder.cpp"           # JPEG decoder (used if JPEG files detected)
+    "jpeg_frame_reader.cpp"      # JPEG frame reader (used if JPEG files detected)
 )
 
 # All requirements (both camera and JPEG support)

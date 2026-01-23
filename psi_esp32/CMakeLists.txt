@@ -3,16 +3,11 @@ cmake_minimum_required(VERSION 3.16)
 # ESP32-P4 libdatachannel port configuration
 set(IDF_TARGET "esp32p4" CACHE STRING "ESP32 target")
 
-# Video source selection
-option(USE_JPEG_MODE "Use JPEG playback instead of camera" OFF)
-
-if(USE_JPEG_MODE)
-    message(STATUS "Video source: JPEG files from flash")
-    add_compile_definitions(VIDEO_SOURCE_JPEG_FILES)
-else()
-    message(STATUS "Video source: MIPI-CSI camera")
-    add_compile_definitions(VIDEO_SOURCE_CAMERA)
-endif()
+# Video source auto-detected at runtime
+# Checks for /littlefs/frames directory with JPEG files
+# If found: JPEG playback mode
+# If not found: Camera mode
+message(STATUS "Video source: Auto-detected at runtime (JPEG playback if /littlefs/frames exists, otherwise camera)")
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 

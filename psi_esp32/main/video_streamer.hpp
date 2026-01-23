@@ -28,10 +28,13 @@ extern "C" {
 #include "esp_heap_caps.h"
 }
 
-#ifdef VIDEO_SOURCE_JPEG_FILES
 #include "jpeg_decoder.hpp"
 #include "jpeg_frame_reader.hpp"
-#endif
+
+enum class VideoSource {
+    CAMERA,
+    JPEG_FILES
+};
 
 class VideoStreamer {
 public:
@@ -70,6 +73,7 @@ private:
     uint32_t fps_;
     bool use_ppa_;             // True if PPA scaling needed (output != camera)
     bool cv_pipeline_enabled_; // True to use YUV→RGB→CV→YUV pipeline, false for direct YUV→YUV
+    VideoSource video_source_; // Detected at runtime (CAMERA or JPEG_FILES)
 
     // Device file descriptors
     int cap_fd_;       // Camera capture device
@@ -122,22 +126,19 @@ private:
     uint32_t frames_in_encoder_;  // Pipeline depth tracker
     uint32_t frames_skipped_;     // Front-end skip counter
 
-#ifdef VIDEO_SOURCE_JPEG_FILES
-    // JPEG playback mode
+    // JPEG playback mode (initialized only if detected at runtime)
     std::unique_ptr<JpegFrameReader> jpeg_reader_;
     std::unique_ptr<JpegDecoder> jpeg_decoder_;
     std::vector<uint8_t> jpeg_buffer_;      // Read buffer
     uint8_t* decoded_yuv_buffer_;           // JPEG decode output
     size_t decoded_yuv_buffer_size_;
-#endif
 
     // Initialization
+    VideoSource detectVideoSource();  // Runtime detection of video source
     bool initCamera();
     bool initEncoder();
     bool initPPA();
-#ifdef VIDEO_SOURCE_JPEG_FILES
     bool initJpegMode();
-#endif
     void cleanup();
 
     // Internal start/stop (called by addTrack/removeTrack)
