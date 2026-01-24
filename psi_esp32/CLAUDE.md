@@ -3,6 +3,136 @@
 ## Project Overview
 ESP32-P4 port of libdatachannel for WebRTC data channels and H.264 video streaming. The project includes a complete WebRTC H.264 streamer that reads video files from LittleFS and streams them to web browsers via WebSocket signaling.
 
+---
+
+## Architecture: PSI Signaling and WebRTC DataChannel Proxy
+
+### Overview
+
+This project uses a unique architecture where the ESP32 acts as a "web server" without exposing any ports. All communication is tunneled through WebRTC, with a signaling server facilitating the initial connection.
+
+**Key Components**:
+- **Signaling Server**: `~/ringtail/signaling/psi/psisignaling.py` - Routes WebSocket messages between ESP32 and browsers
+- **Browser Client**: `~/ringtail/signaling/psi/__nf__client.js` - WebRTC client that connects to ESP32
+- **Service Worker**: `~/ringtail/signaling/psi/__nf__sw.js` - Proxies HTTP requests over DataChannel
+- **ESP32 WebRTC Handler**: `main/httpd_server.cpp` - Handles signaling and serves HTTP over DataChannel
+- **ESP32 HTTP Handlers**: `main/httpd_test.c` - ESP-IDF style HTTP handlers (work over DataChannel)
+
+### Connection Flow
+
+```
+┌─────────┐     WebSocket      ┌──────────────────┐     WebSocket      ┌─────────┐
+│ Browser │◄──────────────────►│ Signaling Server │◄──────────────────►│  ESP32  │
+└─────────┘  /ws/client/<uid>  │ psi.vizycam.com  │  /ws/device/<uid>  └─────────┘
+     │                         └──────────────────┘                          │
+     │                                                                       │
+     │                         WebRTC (P2P)                                  │
+     └───────────────────────────────────────────────────────────────────────┘
+                          DataChannel + Video Track
+```
+
+1. **ESP32 Registers**: Connects to signaling server via WebSocket at `/ws/device/<uid>` (e.g., UID "0123456789")
+2. **Browser Connects**: User visits `https://psi.vizycam.com/0123456789`, loads `__nf__client.js`
+3. **Browser Requests Connection**: Sends `{type: "request", uid: "..."}` via WebSocket
+4. **Signaling Server Routes**: Forwards request to ESP32
+
+### WebRTC Handshake (ESP32 as Offerer)
+
+**Why ESP32 creates the offer**: The ESP32 needs to add the video track before creating the offer. If the browser offered first, renegotiation would be required after ESP32 adds its track—this is simpler.
+
+1. ESP32 receives "request" → creates PeerConnection → adds video track → creates **offer**
+2. Signaling server forwards offer to browser
+3. Browser receives offer → sets remote description → creates **answer**
+4. Signaling server forwards answer to ESP32
+5. Both sides exchange **ICE candidates** via signaling server
+6. **DataChannel opens** + **Video track ready**
+
+### Service Worker HTTP Proxy
+
+The service worker (`__nf__sw.js`) intercepts fetch requests and routes them through the WebRTC DataChannel, making the ESP32 appear as a normal web server to page JavaScript.
+
+```javascript
+// Service worker intercepts fetch to /static/* paths
+self.addEventListener('fetch', event => {
+    if (url.pathname.startsWith("/static/")) {
+        event.respondWith(proxyViaDataChannel(request));
+    }
+});
+```
+
+**Flow**:
+1. Page requests `/static/images/image1.jpg`
+2. Service worker intercepts → sends request over DataChannel
+3. ESP32 receives → `image_handler()` reads file from LittleFS → sends response
+4. Service worker receives → returns as normal fetch Response
+5. Page receives image (transparent to application code)
+
+### SWSP Protocol (Simple WebRTC Service Protocol)
+
+Binary frame format for HTTP-over-DataChannel:
+
+```
+┌────────────┬────────┬────────┬─────────────────┐
+│ stream_id  │ flags  │ length │    payload      │
+│  4 bytes   │2 bytes │2 bytes │  N bytes        │
+│  (LE u32)  │(LE u16)│(LE u16)│                 │
+└────────────┴────────┴────────┴─────────────────┘
+```
+
+**Flags**:
+- `FLAG_SYN = 0x0001` - Metadata frame (JSON headers)
+- `FLAG_FIN = 0x0004` - Final frame in stream
+
+**Request** (Browser → ESP32):
+```json
+{"method": "GET", "pathname": "/static/images/image1.jpg"}
+```
+
+**Response** (ESP32 → Browser):
+- First frame (FLAG_SYN): `{"status": 200, "headers": {"Content-Type": "image/jpeg"}}`
+- Middle frames: Binary data chunks
+- Last frame (FLAG_FIN): Final data chunk
+
+### ESP32 HTTP Handlers
+
+`main/httpd_test.c` implements ESP-IDF compatible HTTP handlers that work over DataChannel:
+
+```c
+// Root handler serves HTML with video element
+static esp_err_t root_handler(httpd_req_t *req) {
+    const char* html = "... <video autoplay> ...";
+    httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+// Image handler streams files from LittleFS
+static esp_err_t image_handler(httpd_req_t *req) {
+    // Must allocate buffer in Internal RAM (PSRAM stack can't do flash I/O)
+    char *chunk = heap_caps_malloc(CHUNK_SIZE, MALLOC_CAP_INTERNAL);
+    // Stream file in chunks...
+}
+```
+
+### Video Streaming
+
+The HTML page served by `root_handler()` includes a `<video>` element. Video is streamed via WebRTC **media track** (not DataChannel):
+
+- **DataChannel**: HTTP requests (HTML, images, API calls)
+- **Media Track**: H.264 video stream from `VideoStreamer`
+
+### File Locations
+
+| Component | Path |
+|-----------|------|
+| Signaling Server | `~/ringtail/signaling/psi/psisignaling.py` |
+| Browser Client JS | `~/ringtail/signaling/psi/__nf__client.js` |
+| Service Worker | `~/ringtail/signaling/psi/__nf__sw.js` |
+| ESP32 WebRTC/Signaling | `main/httpd_server.cpp` |
+| ESP32 HTTP Handlers | `main/httpd_test.c` |
+| ESP32 Video Streamer | `main/video_streamer.cpp` |
+
+---
+
 ## RESOLVED ISSUE: DMA Memory Leak - RtcpNackResponder Unbounded Growth (2025-11-08)
 
 ### Problem Summary
@@ -497,7 +627,11 @@ dependencies:
 4. **POSIX Compatibility**: sock_utils for missing functions
 
 ## Build Commands
+
+**IMPORTANT: Always source the ESP-IDF environment first!**
 ```bash
+source ~/pixy3/esp-idf-v5.5.1/export.sh   # REQUIRED before any idf.py command!
+
 idf.py build          # Build project
 idf.py flash monitor  # Flash and monitor
 idf.py menuconfig     # Configure
@@ -520,4 +654,111 @@ idf.py menuconfig     # Configure
 - `components/libsrtp/CMakeLists.txt` - SRTP component
 
 ---
-*Last updated: 2026-01-24 - Added runtime video source auto-detection, flash I/O safety guidelines, lazy initialization pattern*
+
+## PLANNED: HueTrack Color Tracking Port
+
+### Overview
+
+Port the color tracking algorithm from `~/pixy3/tracking/huetrack.py` to run on ESP32 within the video pipeline. The algorithm learns color statistics from a user-selected region and tracks objects of that color using contour detection.
+
+### Source Algorithm (huetrack.py)
+
+**Color Model**:
+- Uses Pixy-style UV color space: `u = (R-G)/(R+G+B)`, `v = (B-G)/(R+G+B)`
+- Stores mean and covariance matrix for selected color
+- Classification via Mahalanobis distance thresholding
+
+**Learning**:
+- `iterative_teach()` - Refines color model iteratively from initial ROI
+- Uses morphological operations and contour finding to isolate target
+
+**Tracking**:
+- `Tracker` class manages object correspondence across frames
+- State machine: INTRO → TRACKING → LOST
+- Adaptive mean update with drift limiting
+
+### Key Challenge: Frame Synchronization
+
+When user selects a region in the browser, we need the ESP32 to extract pixels from the **exact same frame** the user sees. Solution: **Freeze Mode**.
+
+### Freeze Mode Design
+
+```
+Browser                                    ESP32
+   │                                         │
+   │──── POST /api/freeze ──────────────────>│
+   │                                         │ 1. Capture frame into buffer
+   │<─── OK ─────────────────────────────────│ 2. Enter freeze mode
+   │                                         │    (send same frame repeatedly)
+   │                                         │
+   │ Video shows frozen frame                │
+   │ User draws box directly on <video>      │
+   │                                         │
+   │──── POST /api/teach {x,y,w,h} ─────────>│
+   │                                         │ 3. Learn from stored RGB buffer
+   │<─── OK ─────────────────────────────────│ 4. Exit freeze mode
+   │                                         │
+   │ Video resumes live                      │
+```
+
+**VideoStreamer Changes**:
+- Add `freeze_requested_` and `frozen_` atomic flags
+- When frozen: skip camera capture, resubmit same `yuv_output_buffer_` to encoder
+- Keep `rgb_buffer_` intact for color learning (requires CV pipeline enabled)
+
+### Implementation Phases
+
+**Phase 1: Freeze Mode**
+- Add freeze state to VideoStreamer (`requestFreeze()`, `isFrozen()`, `unfreeze()`)
+- Modify `captureLoop()` to handle frozen state
+- Add `/api/freeze` HTTP endpoint
+
+**Phase 2: Browser Region Selection UI**
+- Add JavaScript to HTML for mouse drag rectangle selection on `<video>`
+- "Freeze" button → POST /api/freeze
+- Visual rectangle overlay during selection
+- "Teach" button → POST /api/teach with region coordinates
+
+**Phase 3: Basic Color Learning**
+- Create `huetrack.hpp/cpp` with `ColorModel` struct
+- Implement UV extraction from RGB buffer region
+- Compute mean and covariance
+- `/api/teach` endpoint triggers learning
+
+**Phase 4: Pixel Classification**
+- Implement Mahalanobis distance classification
+- Draw colored overlay on matching pixels in `processCVFrame()`
+
+**Phase 5: Contour Detection**
+- Implement morphological operations (erode/dilate with 3x3 kernel)
+- Implement connected components or contour tracing
+- Compute blob centroid and area
+
+**Phase 6: Object Tracking**
+- Port `Tracker` class state machine
+- Object correspondence (match detections to existing objects by distance)
+- Handle INTRO validation, LOST timeout
+
+**Phase 7: Mean Adaptation**
+- IIR filter for gradual mean updates
+- Drift limiting from original model
+
+**Phase 8: Browser Feedback**
+- Option A: Draw tracking results into RGB frame (burns into video)
+- Option B: Send tracking data via DataChannel for browser overlay
+
+### Memory Considerations
+
+- RGB buffer already allocated when CV pipeline enabled: `output_width * output_height * 3`
+- Color model: ~100 bytes (mean, covariance, inverse covariance)
+- Per-object state: ~200 bytes (centroid, velocity, state, contours reference)
+- Contour storage: Variable, depends on object complexity
+
+### Prerequisites
+
+**Before implementing**, clean up `video_streamer.cpp`:
+- `captureLoop()` is complex and has structural issues (duplicate camera buffer returns)
+- Refactor for clarity before adding freeze mode logic
+
+---
+*Last updated: 2026-01-24 - Added HueTrack porting plan, PSI signaling architecture documentation, runtime video source auto-detection, flash I/O safety guidelines, lazy initialization pattern*

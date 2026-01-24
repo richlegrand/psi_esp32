@@ -36,6 +36,15 @@ enum class VideoSource {
     JPEG_FILES
 };
 
+// Abstraction for acquired frames (from camera or JPEG decode)
+struct AcquiredFrame {
+    uint8_t* yuv_data;      // Pointer to YUV420 data
+    uint32_t width;         // Frame width
+    uint32_t height;        // Frame height
+    int buffer_index;       // Camera buffer index (for QBUF on release), -1 for JPEG
+    VideoSource source;     // Where this frame came from
+};
+
 class VideoStreamer {
 public:
     // Constructor
@@ -164,6 +173,30 @@ private:
 
     // PPA callback for non-blocking mode
     static bool ppaDoneCallback(ppa_client_handle_t ppa_client, ppa_event_data_t* event_data, void* user_data);
+
+    // PPA configuration helpers (reduce code duplication)
+    ppa_srm_oper_config_t buildPpaYuvToRgb(uint8_t* src, uint32_t src_w, uint32_t src_h,
+                                           uint8_t* dst, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
+                                           bool blocking = true);
+    ppa_srm_oper_config_t buildPpaRgbToYuv(uint8_t* src, uint32_t src_w, uint32_t src_h,
+                                           uint8_t* dst, size_t dst_size,
+                                           bool blocking = true);
+    ppa_srm_oper_config_t buildPpaYuvScale(uint8_t* src, uint32_t src_w, uint32_t src_h,
+                                           uint8_t* dst, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
+                                           bool blocking = true);
+
+    // Frame acquisition abstraction (camera or JPEG)
+    bool acquireFrame(AcquiredFrame& frame);
+    void releaseFrame(AcquiredFrame& frame);
+
+    // Processing paths (output to yuv_output_buffer_)
+    bool processFrameCV(const AcquiredFrame& frame);
+    bool processFrameDirect(const AcquiredFrame& frame);
+
+    // Encoder helpers
+    bool submitToEncoder();
+    bool dequeueEncodedFrame(bool blocking, struct v4l2_buffer& enc_output_buf);
+    void queueFrameForSending(const struct v4l2_buffer& enc_output_buf);
 };
 
 #endif // VIDEO_STREAMER_HPP

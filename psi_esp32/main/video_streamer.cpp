@@ -915,6 +915,139 @@ void VideoStreamer::processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t h
 }
 
 //=============================================================================
+// PPA Configuration Helpers
+//=============================================================================
+
+ppa_srm_oper_config_t VideoStreamer::buildPpaYuvToRgb(
+    uint8_t* src, uint32_t src_w, uint32_t src_h,
+    uint8_t* dst, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
+    bool blocking) {
+
+    return ppa_srm_oper_config_t{
+        .in = {
+            .buffer = src,
+            .pic_w = src_w,
+            .pic_h = src_h,
+            .block_w = src_w,
+            .block_h = src_h,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+        },
+        .out = {
+            .buffer = dst,
+            .buffer_size = dst_size,
+            .pic_w = dst_w,
+            .pic_h = dst_h,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
+            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+        },
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+        .scale_x = (float)dst_w / (float)src_w,
+        .scale_y = (float)dst_h / (float)src_h,
+        .mirror_x = false,
+        .mirror_y = false,
+        .rgb_swap = false,
+        .byte_swap = false,
+        .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+        .alpha_fix_val = 0,
+        .mode = blocking ? PPA_TRANS_MODE_BLOCKING : PPA_TRANS_MODE_NON_BLOCKING,
+        .user_data = blocking ? nullptr : (void*)ppa_done_sem_,
+    };
+}
+
+ppa_srm_oper_config_t VideoStreamer::buildPpaRgbToYuv(
+    uint8_t* src, uint32_t src_w, uint32_t src_h,
+    uint8_t* dst, size_t dst_size,
+    bool blocking) {
+
+    return ppa_srm_oper_config_t{
+        .in = {
+            .buffer = src,
+            .pic_w = src_w,
+            .pic_h = src_h,
+            .block_w = src_w,
+            .block_h = src_h,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
+            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+        },
+        .out = {
+            .buffer = dst,
+            .buffer_size = dst_size,
+            .pic_w = src_w,  // No scaling - same as input
+            .pic_h = src_h,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+        },
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+        .scale_x = 1.0f,
+        .scale_y = 1.0f,
+        .mirror_x = false,
+        .mirror_y = false,
+        .rgb_swap = false,
+        .byte_swap = false,
+        .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+        .alpha_fix_val = 0,
+        .mode = blocking ? PPA_TRANS_MODE_BLOCKING : PPA_TRANS_MODE_NON_BLOCKING,
+        .user_data = blocking ? nullptr : (void*)ppa_done_sem_,
+    };
+}
+
+ppa_srm_oper_config_t VideoStreamer::buildPpaYuvScale(
+    uint8_t* src, uint32_t src_w, uint32_t src_h,
+    uint8_t* dst, size_t dst_size, uint32_t dst_w, uint32_t dst_h,
+    bool blocking) {
+
+    return ppa_srm_oper_config_t{
+        .in = {
+            .buffer = src,
+            .pic_w = src_w,
+            .pic_h = src_h,
+            .block_w = src_w,
+            .block_h = src_h,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+        },
+        .out = {
+            .buffer = dst,
+            .buffer_size = dst_size,
+            .pic_w = dst_w,
+            .pic_h = dst_h,
+            .block_offset_x = 0,
+            .block_offset_y = 0,
+            .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
+            .yuv_range = PPA_COLOR_RANGE_LIMIT,
+            .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
+        },
+        .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
+        .scale_x = (float)dst_w / (float)src_w,
+        .scale_y = (float)dst_h / (float)src_h,
+        .mirror_x = false,
+        .mirror_y = false,
+        .rgb_swap = false,
+        .byte_swap = false,
+        .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
+        .alpha_fix_val = 0,
+        .mode = blocking ? PPA_TRANS_MODE_BLOCKING : PPA_TRANS_MODE_NON_BLOCKING,
+        .user_data = blocking ? nullptr : (void*)ppa_done_sem_,
+    };
+}
+
+//=============================================================================
 // PPA Callback (ISR context)
 //=============================================================================
 
@@ -929,14 +1062,231 @@ bool VideoStreamer::ppaDoneCallback(ppa_client_handle_t ppa_client, ppa_event_da
 }
 
 //=============================================================================
-// Capture Loop
+// Frame Acquisition Abstraction
+//=============================================================================
+
+bool VideoStreamer::acquireFrame(AcquiredFrame& frame) {
+    if (video_source_ == VideoSource::CAMERA) {
+        // Camera mode: DQBUF from V4L2
+        struct v4l2_buffer cam_buf = {};
+        cam_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        cam_buf.memory = V4L2_MEMORY_MMAP;
+
+        if (ioctl(cap_fd_, VIDIOC_DQBUF, &cam_buf) != 0) {
+            return false;
+        }
+
+        frame.yuv_data = cap_buffer_[cam_buf.index];
+        frame.width = cam_width_;
+        frame.height = cam_height_;
+        frame.buffer_index = cam_buf.index;
+        frame.source = VideoSource::CAMERA;
+        return true;
+
+    } else {
+        // JPEG mode: read and decode next frame
+        if (!jpeg_reader_->readNextFrame(jpeg_buffer_)) {
+            ESP_LOGE(TAG, "Failed to read JPEG frame");
+            return false;
+        }
+
+        uint32_t decoded_width, decoded_height;
+        if (!jpeg_decoder_->decode(jpeg_buffer_.data(), jpeg_buffer_.size(),
+                                   decoded_yuv_buffer_, decoded_yuv_buffer_size_,
+                                   &decoded_width, &decoded_height)) {
+            ESP_LOGE(TAG, "JPEG decode failed");
+            return false;
+        }
+
+        frame.yuv_data = decoded_yuv_buffer_;
+        frame.width = decoded_width;
+        frame.height = decoded_height;
+        frame.buffer_index = -1;  // No buffer to return
+        frame.source = VideoSource::JPEG_FILES;
+        return true;
+    }
+}
+
+void VideoStreamer::releaseFrame(AcquiredFrame& frame) {
+    if (frame.source == VideoSource::CAMERA && frame.buffer_index >= 0) {
+        // Return camera buffer to V4L2
+        struct v4l2_buffer cam_buf = {};
+        cam_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        cam_buf.memory = V4L2_MEMORY_MMAP;
+        cam_buf.index = frame.buffer_index;
+        ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
+        frame.buffer_index = -1;  // Mark as released
+    }
+    // JPEG mode: nothing to release (buffer is reused)
+}
+
+//=============================================================================
+// Processing Paths
+//=============================================================================
+
+bool VideoStreamer::processFrameCV(const AcquiredFrame& frame) {
+    // CV Pipeline: YUV420 → RGB888 → CV processing → RGB888 → YUV420
+
+    // Stage 1: YUV420 → RGB888 (with scaling)
+    auto yuv_to_rgb_config = buildPpaYuvToRgb(
+        frame.yuv_data, frame.width, frame.height,
+        rgb_buffer_, rgb_buffer_size_, output_width_, output_height_,
+        true  // blocking
+    );
+
+    esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_to_rgb_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "PPA YUV→RGB failed: %d", ret);
+        return false;
+    }
+
+    // Stage 2: CV processing on RGB888 buffer
+    processCVFrame(rgb_buffer_, output_width_, output_height_);
+
+    // Stage 3: RGB888 → YUV420
+    auto rgb_to_yuv_config = buildPpaRgbToYuv(
+        rgb_buffer_, output_width_, output_height_,
+        yuv_output_buffer_, yuv_output_buffer_size_,
+        true  // blocking
+    );
+
+    ret = ppa_do_scale_rotate_mirror(ppa_rgb_to_yuv_, &rgb_to_yuv_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "PPA RGB→YUV failed: %d", ret);
+        return false;
+    }
+
+    return true;
+}
+
+bool VideoStreamer::processFrameDirect(const AcquiredFrame& frame) {
+    // Direct YUV→YUV scaling (no CV processing) - NON-BLOCKING mode
+    auto yuv_scale_config = buildPpaYuvScale(
+        frame.yuv_data, frame.width, frame.height,
+        yuv_output_buffer_, yuv_output_buffer_size_, output_width_, output_height_,
+        false  // non-blocking
+    );
+
+    // Submit PPA operation - returns immediately
+    esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_scale_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "PPA YUV scaling submit failed: %d", ret);
+        return false;
+    }
+
+    // === PPA is now running in hardware ===
+    // Do test processing while waiting (PSRAM bandwidth test)
+    testProcessing();
+
+    // Wait for PPA to complete
+    if (xSemaphoreTake(ppa_done_sem_, pdMS_TO_TICKS(100)) != pdTRUE) {
+        ESP_LOGW(TAG, "PPA timeout! Skipping frame.");
+        return false;
+    }
+
+    return true;
+}
+
+//=============================================================================
+// Encoder Helpers
+//=============================================================================
+
+bool VideoStreamer::submitToEncoder() {
+    struct v4l2_buffer enc_input_buf = {};
+    enc_input_buf.index = 0;
+    enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+    enc_input_buf.memory = V4L2_MEMORY_USERPTR;
+    enc_input_buf.m.userptr = (unsigned long)yuv_output_buffer_;
+    enc_input_buf.length = yuv_output_buffer_size_;
+
+    if (ioctl(m2m_fd_, VIDIOC_QBUF, &enc_input_buf) != 0) {
+        ESP_LOGE(TAG, "Failed to queue frame to encoder: %s", strerror(errno));
+        return false;
+    }
+
+    frames_in_encoder_++;
+    return true;
+}
+
+bool VideoStreamer::dequeueEncodedFrame(bool blocking, struct v4l2_buffer& enc_output_buf) {
+    memset(&enc_output_buf, 0, sizeof(enc_output_buf));
+    enc_output_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    enc_output_buf.memory = V4L2_MEMORY_MMAP;
+
+    if (ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_output_buf) != 0) {
+        if (blocking) {
+            ESP_LOGE(TAG, "Failed to dequeue encoded frame: %s", strerror(errno));
+        }
+        return false;
+    }
+
+    return true;
+}
+
+void VideoStreamer::queueFrameForSending(const struct v4l2_buffer& enc_output_buf) {
+    uint64_t timestamp_us = esp_timer_get_time();
+    bool keyframe = (enc_output_buf.flags & V4L2_BUF_FLAG_KEYFRAME) != 0;
+
+    // Initialize PTS on first frame
+    if (video_start_pts_ == 0) {
+        video_start_pts_ = timestamp_us;
+    }
+
+    // Calculate relative PTS
+    double pts_sec = (timestamp_us - video_start_pts_) / 1000000.0;
+    std::chrono::duration<double> frameTime(pts_sec);
+    rtc::FrameInfo frameInfo(frameTime);
+    frameInfo.isKeyframe = keyframe;
+
+    // Update frame counter
+    capture_frame_count_++;
+
+    // Logging for every 5th frame
+    if (capture_frame_count_ % 5 == 0) {
+        g_log_frame_timing = true;
+        ESP_LOGI(TAG, "Frame %lu [%s] %u B - queuing (depth=%u)",
+                 (unsigned long)capture_frame_count_, keyframe ? "I" : "P",
+                 enc_output_buf.bytesused, uxQueueMessagesWaiting(send_queue_));
+    }
+
+    // Allocate and queue frame (will be deleted by send task)
+    QueuedFrame* frame = new QueuedFrame{
+        std::vector<uint8_t>(m2m_cap_buffer_[enc_output_buf.index],
+                             m2m_cap_buffer_[enc_output_buf.index] + enc_output_buf.bytesused),
+        frameInfo
+    };
+
+    if (xQueueSend(send_queue_, &frame, 0) != pdTRUE) {
+        ESP_LOGW(TAG, "Send queue full despite front-end skip!");
+        delete frame;
+    }
+
+    if (capture_frame_count_ % 5 == 0) {
+        g_log_frame_timing = false;
+    }
+
+    // Return encoder output buffer
+    struct v4l2_buffer return_buf = enc_output_buf;
+    ioctl(m2m_fd_, VIDIOC_QBUF, &return_buf);
+
+    // Dequeue encoder input buffer
+    struct v4l2_buffer enc_input_buf = {};
+    enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
+    enc_input_buf.memory = V4L2_MEMORY_USERPTR;
+    if (ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_input_buf) == 0) {
+        frames_in_encoder_--;
+    }
+}
+
+//=============================================================================
+// Capture Loop (Refactored)
 //=============================================================================
 
 void VideoStreamer::captureLoop() {
     ESP_LOGI(TAG, "Capture loop started (pipelined mode, %d encoder buffers)", ENCODER_OUTPUT_BUFFERS);
 
-    struct v4l2_buffer cam_buf, enc_input_buf, enc_output_buf;
     uint64_t last_stats_time = esp_timer_get_time();
+    static bool logged_resolution = false;
 
     // Lazy initialization for JPEG mode
     // Must happen here (not in startStreaming) because this task has Internal RAM stack
@@ -951,537 +1301,53 @@ void VideoStreamer::captureLoop() {
         ESP_LOGI(TAG, "JPEG mode initialized successfully");
     }
 
+    // JPEG frame rate limiting state
+    uint64_t last_frame_time_ms = 0;
+    const uint32_t jpeg_target_fps = 3;
+    const uint32_t jpeg_frame_interval_ms = 1000 / jpeg_target_fps;
+
     while (running_) {
-        if (video_source_ == VideoSource::CAMERA) {
-        // Try to submit camera frames to encoder (non-blocking pipeline feed)
-        if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
-            memset(&cam_buf, 0, sizeof(cam_buf));
-            cam_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            cam_buf.memory = V4L2_MEMORY_MMAP;
-
-            // Get camera frame
-            if (ioctl(cap_fd_, VIDIOC_DQBUF, &cam_buf) == 0) {
-                // Check for backpressure (front-end skip)
-                if (shouldSkipFrame()) {
-                    // Skip encoding - return buffer immediately
-                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-                    frames_skipped_++;
-                    ESP_LOGI(TAG, "Skipped frame (queue depth=%u)",
-                             uxQueueMessagesWaiting(send_queue_));
-                    continue;  // Don't try to read from encoder this iteration
-                }
-
-                // Process frame with PPA:
-                // CV mode: YUV→RGB→CV→RGB→YUV (3-stage)
-                // Direct mode: YUV→YUV scaling (1-stage)
-                // Both modes output to yuv_output_buffer_
-
-                if (cv_pipeline_enabled_) {
-                    // CV Pipeline: 3-stage conversion with RGB intermediate
-                    // Stage 1: YUV420 → RGB888
-                    ppa_srm_oper_config_t yuv_to_rgb_config = {
-                    .in = {
-                        .buffer = cap_buffer_[cam_buf.index],
-                        .pic_w = cam_width_,
-                        .pic_h = cam_height_,
-                        .block_w = cam_width_,
-                        .block_h = cam_height_,
-                        .block_offset_x = 0,
-                        .block_offset_y = 0,
-                        .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
-                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-                    },
-                    .out = {
-                        .buffer = rgb_buffer_,
-                        .buffer_size = rgb_buffer_size_,
-                        .pic_w = output_width_,
-                        .pic_h = output_height_,
-                        .block_offset_x = 0,
-                        .block_offset_y = 0,
-                        .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
-                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-                    },
-                    .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-                    .scale_x = (float)output_width_ / (float)cam_width_,
-                    .scale_y = (float)output_height_ / (float)cam_height_,
-                    .mirror_x = false,
-                    .mirror_y = false,
-                    .rgb_swap = false,
-                    .byte_swap = false,
-                    .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
-                    .alpha_fix_val = 0,
-                    .mode = PPA_TRANS_MODE_BLOCKING,
-                    .user_data = nullptr,
-                };
-
-                esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_to_rgb_config);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "PPA YUV→RGB failed: %d", ret);
-                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-                    continue;
-                }
-
-                // Stage 2: CV processing on RGB888 buffer
-                processCVFrame(rgb_buffer_, output_width_, output_height_);
-
-                // Stage 3: RGB888 → YUV420
-                ppa_srm_oper_config_t rgb_to_yuv_config = {
-                    .in = {
-                        .buffer = rgb_buffer_,
-                        .pic_w = output_width_,
-                        .pic_h = output_height_,
-                        .block_w = output_width_,
-                        .block_h = output_height_,
-                        .block_offset_x = 0,
-                        .block_offset_y = 0,
-                        .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
-                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-                    },
-                    .out = {
-                        .buffer = yuv_output_buffer_,
-                        .buffer_size = yuv_output_buffer_size_,
-                        .pic_w = output_width_,
-                        .pic_h = output_height_,
-                        .block_offset_x = 0,
-                        .block_offset_y = 0,
-                        .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
-                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-                    },
-                    .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-                    .scale_x = 1.0f,  // No scaling (already at output size)
-                    .scale_y = 1.0f,
-                    .mirror_x = false,
-                    .mirror_y = false,
-                    .rgb_swap = false,
-                    .byte_swap = false,
-                    .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
-                    .alpha_fix_val = 0,
-                    .mode = PPA_TRANS_MODE_BLOCKING,
-                    .user_data = nullptr,
-                };
-
-                ret = ppa_do_scale_rotate_mirror(ppa_rgb_to_yuv_, &rgb_to_yuv_config);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "PPA RGB→YUV failed: %d", ret);
-                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-                    continue;
-                }
-
-                // Return camera buffer
-                ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-
-                    // Update frame counter
-                    capture_frame_count_++;
-                } else {
-                    // Direct YUV→YUV scaling (no CV processing) - NON-BLOCKING mode
-                    ppa_srm_oper_config_t yuv_scale_config = {
-                    .in = {
-                        .buffer = cap_buffer_[cam_buf.index],
-                        .pic_w = cam_width_,
-                        .pic_h = cam_height_,
-                        .block_w = cam_width_,
-                        .block_h = cam_height_,
-                        .block_offset_x = 0,
-                        .block_offset_y = 0,
-                        .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
-                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-                    },
-                    .out = {
-                        .buffer = yuv_output_buffer_,
-                        .buffer_size = yuv_output_buffer_size_,
-                        .pic_w = output_width_,
-                        .pic_h = output_height_,
-                        .block_offset_x = 0,
-                        .block_offset_y = 0,
-                        .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
-                        .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                        .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-                    },
-                    .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-                    .scale_x = (float)output_width_ / (float)cam_width_,
-                    .scale_y = (float)output_height_ / (float)cam_height_,
-                    .mirror_x = false,
-                    .mirror_y = false,
-                    .rgb_swap = false,
-                    .byte_swap = false,
-                    .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
-                    .alpha_fix_val = 0,
-                    .mode = PPA_TRANS_MODE_NON_BLOCKING,  // NON-BLOCKING!
-                    .user_data = (void*)ppa_done_sem_,     // Pass semaphore to callback
-                };
-
-                // Submit PPA operation - returns immediately!
-                uint64_t ppa_start = esp_timer_get_time();
-                esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_scale_config);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "PPA YUV scaling submit failed: %d", ret);
-                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-                    continue;
-                }
-
-                // === PPA is now running in hardware! ===
-                // Do test processing (reads 345KB from PSRAM)
-                // This will compete with PPA for PSRAM bandwidth
-                uint32_t sum = testProcessing();
-                uint64_t ppa_time0 = esp_timer_get_time() - ppa_start;
-
-                // Wait for PPA to complete (callback will give semaphore)
-                if (xSemaphoreTake(ppa_done_sem_, pdMS_TO_TICKS(100)) != pdTRUE) {
-                    ESP_LOGW(TAG, "PPA timeout! Skipping frame.");
-                    ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-                    continue;
-                }
-                uint64_t ppa_time1 = esp_timer_get_time() - ppa_start;
-
-                // Log PPA timing every 50 frames
-                if (capture_frame_count_ % 50 == 0) {
-                    ESP_LOGI(TAG, "PPA time: %llu us %llu us %lu", ppa_time0, ppa_time1, sum);
-                }
-                // PPA completed! Output is ready in yuv_output_buffer_
-
-                // Return camera buffer
-                ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-
-                // Update statistics
-                capture_frame_count_++;
-
-                // Check encoder input buffers (free up resources)
-                if (frames_in_encoder_ > 0) {
-                    memset(&enc_input_buf, 0, sizeof(enc_input_buf));
-                    enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-                    enc_input_buf.memory = V4L2_MEMORY_USERPTR;
-                    while (ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_input_buf) == 0) {
-                        frames_in_encoder_--;
-                    }
-                }
-                }
-
-                // Submit to encoder (both paths output to yuv_output_buffer_)
-                memset(&enc_input_buf, 0, sizeof(enc_input_buf));
-                enc_input_buf.index = 0;
-                enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-                enc_input_buf.memory = V4L2_MEMORY_USERPTR;
-                enc_input_buf.m.userptr = (unsigned long)yuv_output_buffer_;
-                enc_input_buf.length = yuv_output_buffer_size_;
-
-                if (ioctl(m2m_fd_, VIDIOC_QBUF, &enc_input_buf) == 0) {
-                    frames_in_encoder_++;
-                } else {
-                    ESP_LOGE(TAG, "Failed to queue frame to encoder: %s", strerror(errno));
-                }
-
-                // Return camera buffer
-                ioctl(cap_fd_, VIDIOC_QBUF, &cam_buf);
-            }
-        }
-        } else {  // VideoSource::JPEG_FILES
-            // JPEG playback mode: read JPEG, decode, optionally scale, encode
-
         // Check for backpressure (front-end skip)
         if (shouldSkipFrame()) {
             frames_skipped_++;
-            ESP_LOGI(TAG, "Skipped frame (queue depth=%u)",
-                     uxQueueMessagesWaiting(send_queue_));
+            ESP_LOGI(TAG, "Skipped frame (queue depth=%u)", uxQueueMessagesWaiting(send_queue_));
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
-        // 1. Read next JPEG file
-        if (!jpeg_reader_->readNextFrame(jpeg_buffer_)) {
-            ESP_LOGE(TAG, "Failed to read JPEG frame");
-            vTaskDelay(pdMS_TO_TICKS(100));
-            continue;
-        }
-
-        // 2. Decode JPEG to YUV420
-        static bool logged_resolution = false;
-        uint32_t decoded_width, decoded_height;
-        if (!jpeg_decoder_->decode(jpeg_buffer_.data(), jpeg_buffer_.size(),
-                                   decoded_yuv_buffer_, decoded_yuv_buffer_size_,
-                                   &decoded_width, &decoded_height)) {
-            ESP_LOGE(TAG, "JPEG decode failed");
-            continue;
-        }
-
-        // Log decoded resolution (first frame only)
-        if (!logged_resolution) {
-            ESP_LOGI(TAG, "JPEG decoded: %ux%u -> CV pipeline: YUV→RGB→CV→RGB→YUV → %ux%u",
-                     decoded_width, decoded_height, output_width_, output_height_);
-            logged_resolution = true;
-        }
-
-        // 3. CV Pipeline (3-stage): YUV420 → RGB888 → CV → RGB888 → YUV420
-
-        // Stage 1: YUV420 → RGB888 (with scaling to output resolution)
-        ppa_srm_oper_config_t yuv_to_rgb_config = {
-            .in = {
-                .buffer = decoded_yuv_buffer_,
-                .pic_w = decoded_width,
-                .pic_h = decoded_height,
-                .block_w = decoded_width,
-                .block_h = decoded_height,
-                .block_offset_x = 0,
-                .block_offset_y = 0,
-                .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
-                .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-            },
-            .out = {
-                .buffer = rgb_buffer_,
-                .buffer_size = rgb_buffer_size_,
-                .pic_w = output_width_,
-                .pic_h = output_height_,
-                .block_offset_x = 0,
-                .block_offset_y = 0,
-                .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
-                .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-            },
-            .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-            .scale_x = (float)output_width_ / (float)decoded_width,
-            .scale_y = (float)output_height_ / (float)decoded_height,
-            .mirror_x = false,
-            .mirror_y = false,
-            .rgb_swap = false,
-            .byte_swap = false,
-            .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
-            .alpha_fix_val = 0,
-            .mode = PPA_TRANS_MODE_BLOCKING,
-            .user_data = nullptr,
-        };
-
-        esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_yuv_to_rgb_, &yuv_to_rgb_config);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "PPA YUV→RGB failed: %d", ret);
-            continue;
-        }
-
-        // Stage 2: CV processing on RGB888 buffer
-        processCVFrame(rgb_buffer_, output_width_, output_height_);
-
-        // Stage 3: RGB888 → YUV420
-        ppa_srm_oper_config_t rgb_to_yuv_config = {
-            .in = {
-                .buffer = rgb_buffer_,
-                .pic_w = output_width_,
-                .pic_h = output_height_,
-                .block_w = output_width_,
-                .block_h = output_height_,
-                .block_offset_x = 0,
-                .block_offset_y = 0,
-                .srm_cm = PPA_SRM_COLOR_MODE_RGB888,
-                .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-            },
-            .out = {
-                .buffer = yuv_output_buffer_,
-                .buffer_size = yuv_output_buffer_size_,
-                .pic_w = output_width_,
-                .pic_h = output_height_,
-                .block_offset_x = 0,
-                .block_offset_y = 0,
-                .srm_cm = PPA_SRM_COLOR_MODE_YUV420,
-                .yuv_range = PPA_COLOR_RANGE_LIMIT,
-                .yuv_std = PPA_COLOR_CONV_STD_RGB_YUV_BT601,
-            },
-            .rotation_angle = PPA_SRM_ROTATION_ANGLE_0,
-            .scale_x = 1.0f,  // No scaling (already at output size)
-            .scale_y = 1.0f,
-            .mirror_x = false,
-            .mirror_y = false,
-            .rgb_swap = false,
-            .byte_swap = false,
-            .alpha_update_mode = PPA_ALPHA_NO_CHANGE,
-            .alpha_fix_val = 0,
-            .mode = PPA_TRANS_MODE_BLOCKING,
-            .user_data = nullptr,
-        };
-
-        ret = ppa_do_scale_rotate_mirror(ppa_rgb_to_yuv_, &rgb_to_yuv_config);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "PPA RGB→YUV failed: %d", ret);
-            continue;
-        }
-
-        // Use the converted YUV buffer for encoding
-        uint8_t* encoder_input_yuv = yuv_output_buffer_;
-        size_t encoder_input_size = yuv_output_buffer_size_;
-
-        // 4. Submit to encoder
-        memset(&enc_input_buf, 0, sizeof(enc_input_buf));
-        enc_input_buf.index = 0;
-        enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        enc_input_buf.memory = V4L2_MEMORY_USERPTR;
-        enc_input_buf.m.userptr = (unsigned long)encoder_input_yuv;
-        enc_input_buf.length = encoder_input_size;
-
-        if (ioctl(m2m_fd_, VIDIOC_QBUF, &enc_input_buf) != 0) {
-            ESP_LOGE(TAG, "Failed to queue frame to encoder: %s", strerror(errno));
-            continue;
-        }
-
-        // 5. Get encoded frame (blocking wait)
-        memset(&enc_output_buf, 0, sizeof(enc_output_buf));
-        enc_output_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        enc_output_buf.memory = V4L2_MEMORY_MMAP;
-
-        if (ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_output_buf) != 0) {
-            ESP_LOGE(TAG, "Failed to dequeue encoded frame: %s", strerror(errno));
-            // Clean up encoder input
-            memset(&enc_input_buf, 0, sizeof(enc_input_buf));
-            enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-            enc_input_buf.memory = V4L2_MEMORY_USERPTR;
-            ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_input_buf);
-            continue;
-        }
-
-        // 6. Create frame info with current time PTS
-        uint64_t timestamp_us = esp_timer_get_time();
-        bool keyframe = (enc_output_buf.flags & V4L2_BUF_FLAG_KEYFRAME) != 0;
-
-        // Initialize PTS on first frame
-        if (video_start_pts_ == 0) {
-            video_start_pts_ = timestamp_us;
-        }
-
-        // Calculate relative PTS
-        double pts_sec = (timestamp_us - video_start_pts_) / 1000000.0;
-        std::chrono::duration<double> frameTime(pts_sec);
-        rtc::FrameInfo frameInfo(frameTime);
-        frameInfo.isKeyframe = keyframe;
-
-        // Update frame counter
-        capture_frame_count_++;
-
-        // Enable logging for every 5th frame
-        if (capture_frame_count_ % 5 == 0) {
-            g_log_frame_timing = true;
-            ESP_LOGI(TAG, "Frame %lu [%s] %u B - queuing (depth=%u)",
-                     (unsigned long)capture_frame_count_, keyframe ? "I" : "P",
-                     enc_output_buf.bytesused, uxQueueMessagesWaiting(send_queue_));
-        }
-
-        // 7. Allocate and queue frame (will be deleted by send task)
-        QueuedFrame* frame = new QueuedFrame{
-            std::vector<uint8_t>(m2m_cap_buffer_[enc_output_buf.index],
-                                 m2m_cap_buffer_[enc_output_buf.index] + enc_output_buf.bytesused),
-            frameInfo
-        };
-
-        if (xQueueSend(send_queue_, &frame, 0) != pdTRUE) {
-            ESP_LOGW(TAG, "Send queue full despite front-end skip!");
-            delete frame;
-        }
-
-        // Disable logging
-        if (capture_frame_count_ % 5 == 0) {
-            g_log_frame_timing = false;
-        }
-
-        // Return encoder buffers
-        ioctl(m2m_fd_, VIDIOC_QBUF, &enc_output_buf);
-
-        memset(&enc_input_buf, 0, sizeof(enc_input_buf));
-        enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-        enc_input_buf.memory = V4L2_MEMORY_USERPTR;
-        ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_input_buf);
-
-        // Print statistics periodically
-        uint64_t current_time = esp_timer_get_time();
-        if ((current_time - last_stats_time) >= 1000000) {  // Every second
-            uint64_t elapsed_us = current_time - video_start_pts_;
-            float elapsed_sec = elapsed_us / 1000000.0f;
-            float avg_fps = capture_frame_count_ / elapsed_sec;
-
-            ESP_LOGI(TAG, "JPEG Frame %lu: %.1f fps (avg), %u skipped, %zu/%zu files",
-                     (unsigned long)capture_frame_count_, avg_fps, frames_skipped_,
-                     jpeg_reader_->getCurrentIndex(), jpeg_reader_->getFrameCount());
-            last_stats_time = current_time;
-        }
-
-        // Frame rate limiting for JPEG mode
-        // Target: 3 fps = 333ms per frame
-        static const uint32_t target_fps = 3;
-        static const uint32_t frame_interval_ms = 1000 / target_fps;  // 333ms
-        static uint64_t last_frame_time = 0;
-
-        if (last_frame_time > 0) {
-            uint64_t now = esp_timer_get_time() / 1000;  // Convert to ms
-            uint64_t elapsed_ms = now - last_frame_time;
-            if (elapsed_ms < frame_interval_ms) {
-                uint32_t sleep_ms = frame_interval_ms - elapsed_ms;
-                vTaskDelay(pdMS_TO_TICKS(sleep_ms));
-            }
-        }
-        last_frame_time = esp_timer_get_time() / 1000;  // Update after delay
-        }
-
-        // Try to get encoded frames (non-blocking retrieval)
+        // === Camera mode: pipelined (async encoder) ===
         if (video_source_ == VideoSource::CAMERA) {
-        memset(&enc_output_buf, 0, sizeof(enc_output_buf));
-        enc_output_buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        enc_output_buf.memory = V4L2_MEMORY_MMAP;
+            // Only acquire new frame if encoder has room
+            if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
+                AcquiredFrame frame;
+                if (acquireFrame(frame)) {
+                    // Process frame (CV or direct)
+                    bool success;
+                    if (cv_pipeline_enabled_) {
+                        success = processFrameCV(frame);
+                    } else {
+                        success = processFrameDirect(frame);
+                    }
 
-        if (ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_output_buf) == 0) {
-            // Got an encoded frame
-            uint64_t timestamp_us = esp_timer_get_time();
-            bool keyframe = (enc_output_buf.flags & V4L2_BUF_FLAG_KEYFRAME) != 0;
+                    // Release camera buffer immediately after PPA copies it
+                    releaseFrame(frame);
 
-            // Initialize PTS on first frame
-            if (video_start_pts_ == 0) {
-                video_start_pts_ = timestamp_us;
+                    // Submit to encoder if processing succeeded
+                    if (success) {
+                        submitToEncoder();
+                    }
+                }
             }
 
-            // Calculate relative PTS
-            double pts_sec = (timestamp_us - video_start_pts_) / 1000000.0;
-            std::chrono::duration<double> frameTime(pts_sec);
-            rtc::FrameInfo frameInfo(frameTime);
-            frameInfo.isKeyframe = keyframe;
-
-            // Enable logging for every 5th frame
-            if (capture_frame_count_ % 5 == 0) {
-                g_log_frame_timing = true;
-                ESP_LOGI(TAG, "Frame %lu [%s] %u B - queuing (depth=%u)",
-                         (unsigned long)capture_frame_count_, keyframe ? "I" : "P",
-                         enc_output_buf.bytesused, uxQueueMessagesWaiting(send_queue_));
-            }
-
-            // Allocate and queue frame (will be deleted by send task)
-            QueuedFrame* frame = new QueuedFrame{
-                std::vector<uint8_t>(m2m_cap_buffer_[enc_output_buf.index],
-                                     m2m_cap_buffer_[enc_output_buf.index] + enc_output_buf.bytesused),
-                frameInfo
-            };
-
-            if (xQueueSend(send_queue_, &frame, 0) != pdTRUE) {
-                // Should never happen since we skip at front-end
-                ESP_LOGW(TAG, "Send queue full despite front-end skip!");
-                delete frame;
-            }
-
-            // Disable logging
-            if (capture_frame_count_ % 5 == 0) {
-                g_log_frame_timing = false;
-            }
-
-            // Return encoder buffers
-            ioctl(m2m_fd_, VIDIOC_QBUF, &enc_output_buf);
-
-            memset(&enc_input_buf, 0, sizeof(enc_input_buf));
-            enc_input_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT;
-            enc_input_buf.memory = V4L2_MEMORY_USERPTR;
-            if (ioctl(m2m_fd_, VIDIOC_DQBUF, &enc_input_buf) == 0) {
-                frames_in_encoder_--;
+            // Try to dequeue encoded frames (non-blocking)
+            struct v4l2_buffer enc_output_buf;
+            if (dequeueEncodedFrame(false, enc_output_buf)) {
+                queueFrameForSending(enc_output_buf);
             }
 
             // Print statistics periodically
             uint64_t current_time = esp_timer_get_time();
-            if ((current_time - last_stats_time) >= 1000000) {  // Every second
+            if ((current_time - last_stats_time) >= 1000000) {
                 uint64_t elapsed_us = current_time - video_start_pts_;
                 float elapsed_sec = elapsed_us / 1000000.0f;
                 float avg_fps = capture_frame_count_ / elapsed_sec;
@@ -1491,12 +1357,67 @@ void VideoStreamer::captureLoop() {
                          frames_in_encoder_, frames_skipped_);
                 last_stats_time = current_time;
             }
-        }
-        }
 
-        // Small delay if encoder pipeline is empty (camera mode only)
-        if (video_source_ == VideoSource::CAMERA && frames_in_encoder_ == 0) {
-            vTaskDelay(pdMS_TO_TICKS(1));
+            // Small delay if encoder pipeline is empty
+            if (frames_in_encoder_ == 0) {
+                vTaskDelay(pdMS_TO_TICKS(1));
+            }
+
+        // === JPEG mode: synchronous (blocking encoder) ===
+        } else {
+            AcquiredFrame frame;
+            if (!acquireFrame(frame)) {
+                vTaskDelay(pdMS_TO_TICKS(100));
+                continue;
+            }
+
+            // Log decoded resolution (first frame only)
+            if (!logged_resolution) {
+                ESP_LOGI(TAG, "JPEG decoded: %ux%u -> CV pipeline → %ux%u",
+                         frame.width, frame.height, output_width_, output_height_);
+                logged_resolution = true;
+            }
+
+            // JPEG mode always uses CV pipeline (YUV→RGB→CV→RGB→YUV)
+            if (!processFrameCV(frame)) {
+                continue;
+            }
+
+            // No need to release frame for JPEG mode (buffer is reused)
+
+            // Submit to encoder
+            if (!submitToEncoder()) {
+                continue;
+            }
+
+            // Wait for encoded frame (blocking)
+            struct v4l2_buffer enc_output_buf;
+            if (dequeueEncodedFrame(true, enc_output_buf)) {
+                queueFrameForSending(enc_output_buf);
+            }
+
+            // Print statistics periodically
+            uint64_t current_time = esp_timer_get_time();
+            if ((current_time - last_stats_time) >= 1000000) {
+                uint64_t elapsed_us = current_time - video_start_pts_;
+                float elapsed_sec = elapsed_us / 1000000.0f;
+                float avg_fps = capture_frame_count_ / elapsed_sec;
+
+                ESP_LOGI(TAG, "JPEG Frame %lu: %.1f fps (avg), %u skipped, %zu/%zu files",
+                         (unsigned long)capture_frame_count_, avg_fps, frames_skipped_,
+                         jpeg_reader_->getCurrentIndex(), jpeg_reader_->getFrameCount());
+                last_stats_time = current_time;
+            }
+
+            // Frame rate limiting for JPEG mode
+            if (last_frame_time_ms > 0) {
+                uint64_t now_ms = esp_timer_get_time() / 1000;
+                uint64_t elapsed_ms = now_ms - last_frame_time_ms;
+                if (elapsed_ms < jpeg_frame_interval_ms) {
+                    vTaskDelay(pdMS_TO_TICKS(jpeg_frame_interval_ms - elapsed_ms));
+                }
+            }
+            last_frame_time_ms = esp_timer_get_time() / 1000;
         }
     }
 
