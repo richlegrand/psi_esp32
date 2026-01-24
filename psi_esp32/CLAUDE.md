@@ -258,6 +258,125 @@ Now tasks properly exit within 100ms when `running_` becomes false, calling `vTa
 
 ---
 
+## RESOLVED ISSUE: Runtime Video Source Auto-Detection (2026-01-24)
+
+### Problem Summary
+VideoStreamer used compile-time defines (`VIDEO_SOURCE_CAMERA` / `VIDEO_SOURCE_JPEG_FILES`) requiring separate builds for camera vs JPEG playback modes. Need automatic runtime detection while avoiding memory allocation failures and flash I/O safety violations.
+
+### Critical Constraints Discovered
+
+**1. Flash I/O Safety with PSRAM Stacks**
+- **Cannot read from flash (LittleFS) when running on PSRAM stack** - ESP32 hardware restriction
+- `startStreaming()` runs from libdatachannel ThreadPool with PSRAM stack → **NO flash I/O allowed**
+- `captureLoop()` runs in capture task with Internal RAM stack → **Safe for flash I/O**
+
+**2. Memory Allocation Order**
+- H.264 encoder allocates **353 KB** with `MALLOC_CAP_CACHE_ALIGNED | MALLOC_CAP_INTERNAL` during init
+- JPEG mode allocates **3+ MB** in PSRAM (decode buffers, file buffers)
+- **If JPEG init happens before encoder init**, encoder's 353KB allocation fails (PSRAM fragmentation)
+
+**3. xTaskCreate Stack Allocation**
+- `xTaskCreate` uses **Internal RAM** by default for task stacks (16KB per task)
+- This makes capture task safe for flash I/O operations
+- For PSRAM stacks: Use menuconfig global option or `xTaskCreateStatic` with PSRAM buffer
+
+### The Solution: Lazy Initialization Pattern
+
+**Detection Phase** (Constructor):
+```cpp
+VideoSource VideoStreamer::detectVideoSource() {
+    // Lightweight - just checks directory and scans for .jpg files
+    DIR* dir = opendir("/littlefs/frames");
+    if (!dir) return VideoSource::CAMERA;
+
+    // Check for JPEG files...
+    if (has_jpegs) return VideoSource::JPEG_FILES;
+    return VideoSource::CAMERA;
+}
+```
+
+**Initialization Order** (Critical for Memory):
+1. **Constructor**: Detection only (lightweight, no large allocations)
+2. **startStreaming()**: Encoder init (353 KB) → PPA init (small DMA) → NO JPEG init
+3. **captureLoop()**: Lazy JPEG init (3+ MB PSRAM) - only if JPEG mode, only on first frame
+
+**Lazy JPEG Init** (in Internal RAM stack task):
+```cpp
+void VideoStreamer::captureLoop() {
+    // Lazy init for JPEG mode - safe for flash I/O (Internal RAM stack)
+    if (video_source_ == VideoSource::JPEG_FILES && !jpeg_reader_) {
+        if (!initJpegMode()) {
+            running_ = false;
+            return;
+        }
+    }
+
+    while (running_) {
+        if (video_source_ == VideoSource::CAMERA) {
+            // Camera path...
+        } else {  // VideoSource::JPEG_FILES
+            // JPEG path (flash I/O safe here)...
+        }
+    }
+}
+```
+
+### Key Benefits
+
+1. **Single binary**: One build serves both camera and JPEG modes
+2. **Automatic detection**: Checks `/littlefs/frames/` for JPEG files at startup
+3. **Memory safe**: Preserves encoder-first allocation order
+4. **Flash I/O safe**: JPEG init in Internal RAM stack task
+5. **Runtime flexibility**: Same binary can switch modes with different flash images
+
+### Implementation Details
+
+**Files Modified**:
+- `main/video_streamer.hpp` - Added VideoSource enum, removed all `#ifdef VIDEO_SOURCE_*` guards
+- `main/video_streamer.cpp` - Runtime detection, lazy init, conditional cleanup
+- `CMakeLists.txt` - Removed compile-time VIDEO_SOURCE selection
+- `main/CMakeLists.txt` - JPEG sources always compiled
+
+**Detection Logic**:
+- If `/littlefs/frames/` exists and contains `.jpg` files → JPEG mode
+- Otherwise → Camera mode
+
+**Runtime Branching**: All `#ifdef VIDEO_SOURCE_*` converted to `if (video_source_ == ...)`
+
+### Critical Insights
+
+**Why lazy initialization is essential**:
+1. `startStreaming()` called from ThreadPool (PSRAM stack) - cannot do flash I/O
+2. Encoder must initialize before JPEG buffers (memory order)
+3. `captureLoop()` has Internal RAM stack - safe for `opendir`, `readdir`, file reads
+4. Pattern matches existing working code (prevents regressions)
+
+**Flash I/O restriction applies to**:
+- `opendir()`, `readdir()`, `closedir()` - directory traversal
+- `open()`, `read()`, `close()` - file I/O
+- Any LittleFS operations from PSRAM stack → crash or corruption
+
+**Safe locations for flash I/O**:
+- app_main task (Internal RAM stack)
+- Tasks created with `xTaskCreate` (Internal RAM stack by default)
+- Tasks created with `xTaskCreateStatic` using Internal RAM buffer
+
+### Also Implemented: Runtime CV Pipeline Toggle
+
+Previously CV pipeline was compile-time (`#define CV_PIPELINE`). Now controlled by constructor parameter:
+
+```cpp
+VideoStreamer(uint32_t output_width, uint32_t output_height,
+              uint32_t fps = 25,
+              bool enable_cv = false);  // Runtime CV toggle
+```
+
+**CV Pipeline Modes**:
+- `enable_cv = false`: Direct YUV→YUV scaling (default)
+- `enable_cv = true`: YUV→RGB→CV processing→RGB→YUV (for computer vision)
+
+---
+
 ## CURRENT ISSUE: Callback Memory Leak Investigation (2025-11-11)
 
 ### Problem
@@ -401,4 +520,4 @@ idf.py menuconfig     # Configure
 - `components/libsrtp/CMakeLists.txt` - SRTP component
 
 ---
-*Last updated: 2026-01-07 - Added non-blocking PPA implementation, task leak fix, performance analysis*
+*Last updated: 2026-01-24 - Added runtime video source auto-detection, flash I/O safety guidelines, lazy initialization pattern*
