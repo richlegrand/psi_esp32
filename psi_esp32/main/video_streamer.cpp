@@ -12,6 +12,7 @@
 #include "esp_video_ioctl.h"
 #include "esp_cam_sensor_types.h"
 #include <cstring>
+#include <algorithm>
 #include <unistd.h>
 #include <dirent.h>
 #include <strings.h>
@@ -96,6 +97,7 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
       freeze_requested_(true), frozen_(false),  // Start frozen for region selection
       teach_iterate_requested_(false), teach_accept_requested_(false), visualization_dirty_(false),
       rgb_original_(nullptr), rgb_original_size_(0),
+      tracking_enabled_(false), tracking_detector_(100),
       video_start_pts_(0), capture_frame_count_(0),
       frames_in_encoder_(0), frames_skipped_(0),
       decoded_yuv_buffer_(nullptr), decoded_yuv_buffer_size_(0)
@@ -905,26 +907,142 @@ uint32_t VideoStreamer::testProcessing() {
 //=============================================================================
 
 void VideoStreamer::processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t height) {
-    // Phase 1: Placeholder - just pass through
-    // Future phases will add:
-    //   - Edge detection (Canny, Sobel)
-    //   - Motion detection (frame differencing)
-    //   - Object tracking (color-based, blob detection)
-    //   - Annotations (draw boxes, text overlays)
+    // CV processing placeholder - currently just tracking overlay
+    // Future: edge detection, motion detection, etc.
 
-    // For now, this is a no-op to verify YUV→RGB→YUV roundtrip works
-    // RGB data format: width * height * 3 bytes (R, G, B interleaved)
+    // Example: Draw a simple test pattern (disabled)
+    // for (uint32_t y = 0; y < 10; y++) {
+    //     for (uint32_t x = 0; x < width; x++) {
+    //         uint32_t idx = (y * width + x) * 3;
+    //         rgb_data[idx + 0] = 0;
+    //         rgb_data[idx + 1] = 0;
+    //         rgb_data[idx + 2] = 0xff; // Red line at top
+    //     }
+    // }
+}
 
-    // Example: Draw a simple test pattern (optional, can be commented out)
-    // Uncomment to verify RGB buffer is working:
-    
-    for (uint32_t y = 0; y < 10; y++) {
-        for (uint32_t x = 0; x < width; x++) {
-            uint32_t idx = (y * width + x) * 3;
-            rgb_data[idx + 0] = 0;  
-            rgb_data[idx + 1] = 0;
-            rgb_data[idx + 2] = 0xff; // Red line at top
+//=============================================================================
+// Tracking Visualization
+//=============================================================================
+
+void VideoStreamer::renderTrackingVisualization() {
+    if (!tracking_enabled_ || !rgb_buffer_ || tracking_contours_.empty()) {
+        return;
+    }
+
+    int width = static_cast<int>(output_width_);
+    int height = static_cast<int>(output_height_);
+    int stride = width * 3;
+
+    // Helper: draw semi-transparent tint over contour runs
+    auto drawContourTinted = [&](const tracking::Contour& contour,
+                                  uint8_t tintR, uint8_t tintG, uint8_t tintB,
+                                  float alpha) {
+        float invAlpha = 1.0f - alpha;
+
+        for (const auto& run : contour.runs) {
+            if (run.y < 0 || run.y >= height) continue;
+
+            uint8_t* row = rgb_buffer_ + run.y * stride;
+            int xStart = std::max(0, run.xStart);
+            int xEnd = std::min(run.xEnd, width - 1);
+
+            for (int x = xStart; x <= xEnd; x++) {
+                int idx = x * 3;
+                row[idx]     = static_cast<uint8_t>(row[idx]     * invAlpha + tintR * alpha);
+                row[idx + 1] = static_cast<uint8_t>(row[idx + 1] * invAlpha + tintG * alpha);
+                row[idx + 2] = static_cast<uint8_t>(row[idx + 2] * invAlpha + tintB * alpha);
+            }
         }
+    };
+
+    // Helper: draw contour outline using convex hull
+    auto drawContourOutline = [&](const tracking::Contour& contour,
+                                   uint8_t r, uint8_t g, uint8_t b) {
+        std::vector<tracking::Point> hull = contour.convexHull();
+        if (hull.size() < 2) return;
+
+        // Bresenham line drawing
+        auto drawLine = [&](tracking::Point p0, tracking::Point p1) {
+            int dx = std::abs(p1.x - p0.x);
+            int dy = std::abs(p1.y - p0.y);
+            int sx = (p0.x < p1.x) ? 1 : -1;
+            int sy = (p0.y < p1.y) ? 1 : -1;
+            int err = dx - dy;
+
+            while (true) {
+                if (p0.x >= 0 && p0.x < width && p0.y >= 0 && p0.y < height) {
+                    int idx = p0.y * stride + p0.x * 3;
+                    rgb_buffer_[idx]     = r;
+                    rgb_buffer_[idx + 1] = g;
+                    rgb_buffer_[idx + 2] = b;
+                }
+
+                if (p0.x == p1.x && p0.y == p1.y) break;
+
+                int e2 = 2 * err;
+                if (e2 > -dy) { err -= dy; p0.x += sx; }
+                if (e2 < dx)  { err += dx; p0.y += sy; }
+            }
+        };
+
+        for (size_t i = 0; i < hull.size(); i++) {
+            size_t j = (i + 1) % hull.size();
+            drawLine(hull[i], hull[j]);
+        }
+    };
+
+    // Helper: draw crosshair at point
+    auto drawCross = [&](int cx, int cy, int size, uint8_t r, uint8_t g, uint8_t b) {
+        for (int i = -size; i <= size; i++) {
+            // Horizontal
+            int x = cx + i;
+            if (x >= 0 && x < width && cy >= 0 && cy < height) {
+                int idx = cy * stride + x * 3;
+                rgb_buffer_[idx]     = r;
+                rgb_buffer_[idx + 1] = g;
+                rgb_buffer_[idx + 2] = b;
+            }
+            // Vertical
+            int y = cy + i;
+            if (cx >= 0 && cx < width && y >= 0 && y < height) {
+                int idx = y * stride + cx * 3;
+                rgb_buffer_[idx]     = r;
+                rgb_buffer_[idx + 1] = g;
+                rgb_buffer_[idx + 2] = b;
+            }
+        }
+    };
+
+    // Find largest contour
+    const tracking::Contour* largest = nullptr;
+    int maxArea = 0;
+    for (const auto& c : tracking_contours_) {
+        if (c.area > maxArea) {
+            maxArea = c.area;
+            largest = &c;
+        }
+    }
+
+    // Draw all non-primary contours in gray (semi-transparent)
+    for (const auto& c : tracking_contours_) {
+        if (&c != largest) {
+            drawContourTinted(c, 128, 128, 128, 0.25f);  // Gray tint
+            drawContourOutline(c, 100, 100, 100);        // Gray outline
+        }
+    }
+
+    // Draw largest contour highlighted
+    if (largest) {
+        // Orange tint for primary tracking target
+        drawContourTinted(*largest, 255, 165, 0, 0.35f);
+
+        // Cyan outline
+        drawContourOutline(*largest, 0, 255, 255);
+
+        // Red crosshair at centroid
+        tracking::Point center = largest->centroid();
+        drawCross(center.x, center.y, 6, 255, 0, 0);
     }
 }
 
@@ -1038,12 +1156,21 @@ bool VideoStreamer::iterateTeaching() {
 
 void VideoStreamer::acceptTeaching() {
     color_teacher_.accept();
+
+    // Copy the accepted model for tracking
+    tracking_model_ = color_teacher_.model();
+    tracking_enabled_ = true;
+    tracking_contours_.clear();
+
+    ESP_LOGI(TAG, "Tracking enabled: mean=(%.4f, %.4f), threshold_sq=%.2f",
+             tracking_model_.mean_u, tracking_model_.mean_v, tracking_model_.threshold_sq);
+
     // Free the original buffer copy
     if (rgb_original_) {
         heap_caps_free(rgb_original_);
         rgb_original_ = nullptr;
     }
-    ESP_LOGI(TAG, "Teaching accepted - model saved");
+    ESP_LOGI(TAG, "Teaching accepted - model saved, tracking active");
     // Unfreeze automatically after accepting
     unfreeze();
 }
@@ -1293,7 +1420,37 @@ bool VideoStreamer::processFrameCV(const AcquiredFrame& frame) {
     }
 
     // Stage 2: CV processing on RGB888 buffer
-    //processCVFrame(rgb_buffer_, output_width_, output_height_);
+    if (tracking_enabled_) {
+        int stride = output_width_ * 3;
+        int minAreaPixels = static_cast<int>(0.001f * output_width_ * output_height_);
+
+        tracking_detector_.setMinArea(minAreaPixels);
+
+        // Time detection
+        uint64_t t0 = esp_timer_get_time();
+        tracking_detector_.detect(rgb_buffer_, output_width_, output_height_, stride,
+                                  tracking_model_, tracking_contours_);
+        uint64_t t1 = esp_timer_get_time();
+
+        // Time convex hull computation (for all contours)
+        uint64_t hull_time = 0;
+        for (const auto& c : tracking_contours_) {
+            uint64_t h0 = esp_timer_get_time();
+            auto hull = c.convexHull();
+            uint64_t h1 = esp_timer_get_time();
+            hull_time += (h1 - h0);
+            (void)hull;  // Prevent optimization
+        }
+
+        // Log timing every frame
+        ESP_LOGI(TAG, "Tracking: detect=%llu us, hull=%llu us (%zu contours)",
+                 (unsigned long long)(t1 - t0),
+                 (unsigned long long)hull_time,
+                 tracking_contours_.size());
+
+        // Render tracking overlay onto RGB buffer
+        renderTrackingVisualization();
+    }
 
     // Stage 3: RGB888 → YUV420
     auto rgb_to_yuv_config = buildPpaRgbToYuv(

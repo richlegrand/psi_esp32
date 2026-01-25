@@ -99,6 +99,13 @@ public:
     // Get current color model (only valid after teaching accepted)
     const tracking::ColorModel& getColorModel() const;
 
+    // Tracking state (active after teaching accepted)
+    bool isTrackingEnabled() const { return tracking_enabled_; }
+    // Stop tracking (disable color detection overlay)
+    void stopTracking() { tracking_enabled_ = false; }
+    // Get detected contours from current frame (for sending to browser)
+    const std::vector<tracking::Contour>& getTrackingContours() const { return tracking_contours_; }
+
 private:
     // Configuration
     uint32_t cam_width_;       // Camera resolution (auto-detected from sensor)
@@ -163,6 +170,12 @@ private:
     uint8_t* rgb_original_;                       // Copy of original RGB for teaching iterations
     size_t rgb_original_size_;
 
+    // Color tracking (active after teaching accepted)
+    std::atomic<bool> tracking_enabled_;          // True when tracking is active
+    tracking::ColorModel tracking_model_;         // Copy of accepted color model
+    tracking::ContourDetector tracking_detector_; // Detector instance for tracking
+    std::vector<tracking::Contour> tracking_contours_;  // Detected contours per frame
+
     // Track management (one track per client)
     std::map<std::string, std::shared_ptr<rtc::Track>> tracks_;
     std::mutex tracks_mutex_;
@@ -198,6 +211,9 @@ private:
 
     // CV processing hook (runs on RGB888 buffer)
     void processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t height);
+
+    // Tracking visualization (draws detected contours on RGB buffer)
+    void renderTrackingVisualization();
 
     // Test processing (PSRAM bandwidth test)
     uint32_t testProcessing();

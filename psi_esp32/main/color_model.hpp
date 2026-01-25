@@ -93,6 +93,33 @@ struct ColorModel {
         float dv = v - mean_v;
         return (a * du * du + b * du * dv + c * dv * dv) < threshold_sq;
     }
+
+    // Fast test using cross-multiplication (no division)
+    // Instead of computing u = (r-g)/sum and testing distance,
+    // we multiply through by sum to avoid division entirely.
+    //
+    // Original: du = (r-g)/sum - mean_u, dv = (2b-r-g)/sum - mean_v
+    // Rewrite:  delta_r = (r-g) - mean_u*sum  (= du * sum)
+    //           delta_b = (2b-r-g) - mean_v*sum  (= dv * sum)
+    // Test: a*du² + b*du*dv + c*dv² < threshold_sq
+    // Becomes: a*delta_r² + b*delta_r*delta_b + c*delta_b² < threshold_sq * sum²
+    bool testFast(uint8_t r_val, uint8_t g_val, uint8_t b_val) const {
+        int sum = r_val + g_val + b_val;
+        if (sum < 3) return false;  // Too dark
+
+        // Scaled differences (avoids division)
+        float fsum = static_cast<float>(sum);
+        float delta_r = (r_val - g_val) - mean_u * fsum;
+        float delta_b = (2 * b_val - r_val - g_val) - mean_v * fsum;
+
+        // Mahalanobis distance * sum², compared to threshold * sum²
+        float dist = a * delta_r * delta_r
+                   + b * delta_r * delta_b
+                   + c * delta_b * delta_b;
+        float thresh = threshold_sq * fsum * fsum;
+
+        return dist < thresh;
+    }
 };
 
 } // namespace tracking

@@ -20,7 +20,7 @@ void ContourDetector::findRunsWithModel(const uint8_t* row, int width, int y,
             uint8_t r = row[x * 3];
             uint8_t g = row[x * 3 + 1];
             uint8_t b = row[x * 3 + 2];
-            if (model.test(r, g, b)) break;
+            if (model.testFast(r, g, b)) break;
             x++;
         }
 
@@ -33,7 +33,7 @@ void ContourDetector::findRunsWithModel(const uint8_t* row, int width, int y,
             uint8_t r = row[x * 3];
             uint8_t g = row[x * 3 + 1];
             uint8_t b = row[x * 3 + 2];
-            if (!model.test(r, g, b)) break;
+            if (!model.testFast(r, g, b)) break;
             x++;
         }
 
