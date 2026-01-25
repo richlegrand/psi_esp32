@@ -180,6 +180,80 @@ void WebRTCSession::handleSwspFrame(const rtc::binary& frame_data) {
     }
 }
 
+void WebRTCSession::handleControlMessage(const std::string& message) {
+    ESP_LOGI(TAG, "Control message: %s", message.c_str());
+
+    cJSON* json = cJSON_Parse(message.c_str());
+    if (!json) {
+        ESP_LOGE(TAG, "Failed to parse control message JSON");
+        return;
+    }
+
+    cJSON* id_item = cJSON_GetObjectItem(json, "id");
+    cJSON* prop_item = cJSON_GetObjectItem(json, "prop");
+    cJSON* val_item = cJSON_GetObjectItem(json, "val");
+
+    if (!id_item || !cJSON_IsString(id_item)) {
+        ESP_LOGE(TAG, "Control message missing 'id' field");
+        cJSON_Delete(json);
+        return;
+    }
+
+    const char* id = id_item->valuestring;
+    const char* prop = prop_item && cJSON_IsString(prop_item) ? prop_item->valuestring : "";
+
+    ESP_LOGI(TAG, "Control: id=%s prop=%s", id, prop);
+
+    // Handle video selection (normalized coordinates 0-1) - starts teaching
+    if (strcmp(id, "video") == 0 && strcmp(prop, "selection") == 0) {
+        if (val_item && cJSON_IsArray(val_item) && cJSON_GetArraySize(val_item) >= 4) {
+            float x = (float)cJSON_GetArrayItem(val_item, 0)->valuedouble;
+            float y = (float)cJSON_GetArrayItem(val_item, 1)->valuedouble;
+            float w = (float)cJSON_GetArrayItem(val_item, 2)->valuedouble;
+            float h = (float)cJSON_GetArrayItem(val_item, 3)->valuedouble;
+
+            ESP_LOGI(TAG, "Video selection: x=%.3f y=%.3f w=%.3f h=%.3f", x, y, w, h);
+
+            if (video_streamer_) {
+                // Start teaching with selected region
+                if (video_streamer_->startTeaching(x, y, w, h)) {
+                    ESP_LOGI(TAG, "Teaching started with selection");
+                } else {
+                    ESP_LOGW(TAG, "Failed to start teaching - unfreezing");
+                    video_streamer_->unfreeze();
+                }
+            }
+        }
+    }
+
+    // Handle "Next" button click - iterate teaching
+    if (strcmp(id, "next-btn") == 0 && strcmp(prop, "clicked") == 0) {
+        ESP_LOGI(TAG, "Next button clicked - iterating teaching");
+        if (video_streamer_) {
+            video_streamer_->iterateTeaching();
+        }
+    }
+
+    // Handle "Accept" button click - accept color model
+    if (strcmp(id, "accept-btn") == 0 && strcmp(prop, "clicked") == 0) {
+        ESP_LOGI(TAG, "Accept button clicked - accepting model");
+        if (video_streamer_) {
+            video_streamer_->acceptTeaching();
+        }
+    }
+
+    // Handle "Cancel" button click - cancel teaching and unfreeze
+    if (strcmp(id, "cancel-btn") == 0 && strcmp(prop, "clicked") == 0) {
+        ESP_LOGI(TAG, "Cancel button clicked - cancelling teaching");
+        if (video_streamer_) {
+            video_streamer_->cancelTeaching();
+            video_streamer_->unfreeze();
+        }
+    }
+
+    cJSON_Delete(json);
+}
+
 //=============================================================================
 // WebRTCServer Implementation
 //=============================================================================
@@ -414,10 +488,14 @@ void WebRTCServer::handleRequest(const std::string& client_id) {
         ESP_LOGI(TAG, "DataChannel opened for client: %s", client_id.c_str());
 
         auto session = std::make_shared<WebRTCSession>(client_id, pc, dc);
+        session->setVideoStreamer(video_streamer_.get());
 
         dc->onMessage([session](std::variant<rtc::binary, std::string> data) {
             if (std::holds_alternative<rtc::binary>(data)) {
                 session->handleSwspFrame(std::get<rtc::binary>(data));
+            } else {
+                // String message - treat as control message
+                session->handleControlMessage(std::get<std::string>(data));
             }
         });
 
@@ -949,6 +1027,67 @@ int httpd_req_recv(httpd_req_t *r, char *buf, size_t buf_len) {
         memcpy(buf, aux->body.data(), copy_len);
     }
     return (int)copy_len;
+}
+
+//=============================================================================
+// Video Streamer C API (for freeze/teach functionality)
+//=============================================================================
+
+esp_err_t httpd_video_freeze(httpd_handle_t handle) {
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    auto ctx = (httpd_server_context*)handle;
+    VideoStreamer* vs = ctx->server->getVideoStreamer();
+    if (!vs) {
+        ESP_LOGE(TAG, "VideoStreamer not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!vs->isCvPipelineEnabled()) {
+        ESP_LOGW(TAG, "Freeze requires CV pipeline to be enabled");
+        return ESP_ERR_NOT_SUPPORTED;
+    }
+    vs->requestFreeze();
+    return ESP_OK;
+}
+
+esp_err_t httpd_video_unfreeze(httpd_handle_t handle) {
+    if (!handle) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    auto ctx = (httpd_server_context*)handle;
+    VideoStreamer* vs = ctx->server->getVideoStreamer();
+    if (!vs) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    vs->unfreeze();
+    return ESP_OK;
+}
+
+bool httpd_video_is_frozen(httpd_handle_t handle) {
+    if (!handle) {
+        return false;
+    }
+    auto ctx = (httpd_server_context*)handle;
+    VideoStreamer* vs = ctx->server->getVideoStreamer();
+    if (!vs) {
+        return false;
+    }
+    return vs->isFrozen();
+}
+
+uint8_t* httpd_video_get_rgb_buffer(httpd_handle_t handle, uint32_t* width, uint32_t* height) {
+    if (!handle) {
+        return NULL;
+    }
+    auto ctx = (httpd_server_context*)handle;
+    VideoStreamer* vs = ctx->server->getVideoStreamer();
+    if (!vs || !vs->isFrozen()) {
+        return NULL;
+    }
+    if (width) *width = vs->getWidth();
+    if (height) *height = vs->getHeight();
+    return vs->getRgbBuffer();
 }
 
 } // extern "C"

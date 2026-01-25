@@ -93,6 +93,9 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
       ppa_done_sem_(nullptr),
       capture_task_(nullptr), send_task_(nullptr),
       running_(false), force_keyframe_(false),
+      freeze_requested_(true), frozen_(false),  // Start frozen for region selection
+      teach_iterate_requested_(false), teach_accept_requested_(false), visualization_dirty_(false),
+      rgb_original_(nullptr), rgb_original_size_(0),
       video_start_pts_(0), capture_frame_count_(0),
       frames_in_encoder_(0), frames_skipped_(0),
       decoded_yuv_buffer_(nullptr), decoded_yuv_buffer_size_(0)
@@ -563,6 +566,12 @@ void VideoStreamer::cleanup() {
             rgb_buffer_size_ = 0;
         }
 
+        if (rgb_original_) {
+            heap_caps_free(rgb_original_);
+            rgb_original_ = nullptr;
+            rgb_original_size_ = 0;
+        }
+
         if (ppa_rgb_to_yuv_) {
             ppa_unregister_client(ppa_rgb_to_yuv_);
             ppa_rgb_to_yuv_ = nullptr;
@@ -779,6 +788,11 @@ void VideoStreamer::stopStreaming() {
     ESP_LOGI(TAG, "Stopping video streamer...");
     running_ = false;
 
+    // Reset freeze state for next session
+    // Set freeze_requested_ = true so next session also starts frozen
+    frozen_ = false;
+    freeze_requested_ = true;
+
     // Wait for tasks to finish
     if (capture_task_) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -912,6 +926,144 @@ void VideoStreamer::processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t h
             rgb_data[idx + 2] = 0xff; // Red line at top
         }
     }
+}
+
+//=============================================================================
+// Freeze Mode Control
+//=============================================================================
+
+void VideoStreamer::requestFreeze() {
+    if (!cv_pipeline_enabled_) {
+        ESP_LOGW(TAG, "Freeze mode requires CV pipeline to be enabled (for RGB buffer access)");
+        return;
+    }
+    if (frozen_) {
+        ESP_LOGW(TAG, "Already frozen");
+        return;
+    }
+    ESP_LOGI(TAG, "Freeze requested - will freeze on next frame");
+    freeze_requested_ = true;
+}
+
+void VideoStreamer::unfreeze() {
+    if (!frozen_) {
+        ESP_LOGW(TAG, "Not frozen");
+        return;
+    }
+    // Cancel any ongoing teaching
+    if (color_teacher_.state() != tracking::TeachState::IDLE &&
+        color_teacher_.state() != tracking::TeachState::ACCEPTED) {
+        color_teacher_.cancel();
+    }
+    ESP_LOGI(TAG, "Unfreezing - resuming live video");
+    frozen_ = false;
+}
+
+//=============================================================================
+// Color Teaching Control
+//=============================================================================
+
+bool VideoStreamer::startTeaching(float roi_x, float roi_y, float roi_w, float roi_h) {
+    if (!cv_pipeline_enabled_) {
+        ESP_LOGW(TAG, "Teaching requires CV pipeline to be enabled");
+        return false;
+    }
+    if (!frozen_) {
+        ESP_LOGW(TAG, "Must freeze video before starting teaching");
+        return false;
+    }
+    if (!rgb_buffer_) {
+        ESP_LOGE(TAG, "RGB buffer not available");
+        return false;
+    }
+
+    // Save a copy of the original RGB buffer for subsequent iterations
+    if (!rgb_original_) {
+        rgb_original_size_ = rgb_buffer_size_;
+        rgb_original_ = (uint8_t*)heap_caps_malloc(rgb_original_size_, MALLOC_CAP_SPIRAM);
+        if (!rgb_original_) {
+            ESP_LOGE(TAG, "Failed to allocate RGB original buffer");
+            return false;
+        }
+    }
+    memcpy(rgb_original_, rgb_buffer_, rgb_buffer_size_);
+    ESP_LOGI(TAG, "Saved original RGB buffer (%u bytes)", (unsigned)rgb_buffer_size_);
+
+    // Calculate stride (RGB888 = 3 bytes per pixel)
+    int stride = output_width_ * 3;
+
+    bool result = color_teacher_.start(rgb_buffer_, output_width_, output_height_, stride,
+                                        roi_x, roi_y, roi_w, roi_h);
+
+    if (result) {
+        ESP_LOGI(TAG, "Teaching started with ROI (%.2f, %.2f) %.2fx%.2f",
+                 roi_x, roi_y, roi_w, roi_h);
+        // Perform first iteration immediately (this sets visualization_dirty_)
+        iterateTeaching();
+    }
+    return result;
+}
+
+bool VideoStreamer::iterateTeaching() {
+    if (!frozen_ || !rgb_buffer_) {
+        ESP_LOGW(TAG, "Cannot iterate: not frozen or no RGB buffer");
+        return false;
+    }
+
+    auto state = color_teacher_.state();
+    if (state != tracking::TeachState::BOOTSTRAPPING &&
+        state != tracking::TeachState::ITERATING &&
+        state != tracking::TeachState::CONVERGED) {
+        ESP_LOGW(TAG, "Cannot iterate: teaching not in progress (state=%d)", (int)state);
+        return false;
+    }
+
+    // Restore original RGB buffer before detection (visualization may have modified it)
+    if (rgb_original_) {
+        memcpy(rgb_buffer_, rgb_original_, rgb_buffer_size_);
+    }
+
+    int stride = output_width_ * 3;
+    bool result = color_teacher_.iterate(rgb_buffer_, output_width_, output_height_, stride);
+
+    if (result) {
+        // Render visualization to RGB buffer
+        color_teacher_.renderVisualization(rgb_buffer_, output_width_, output_height_, stride);
+        // Mark as dirty so frozen loop will re-encode
+        visualization_dirty_ = true;
+    }
+
+    return result;
+}
+
+void VideoStreamer::acceptTeaching() {
+    color_teacher_.accept();
+    // Free the original buffer copy
+    if (rgb_original_) {
+        heap_caps_free(rgb_original_);
+        rgb_original_ = nullptr;
+    }
+    ESP_LOGI(TAG, "Teaching accepted - model saved");
+    // Unfreeze automatically after accepting
+    unfreeze();
+}
+
+void VideoStreamer::cancelTeaching() {
+    color_teacher_.cancel();
+    // Free the original buffer copy
+    if (rgb_original_) {
+        heap_caps_free(rgb_original_);
+        rgb_original_ = nullptr;
+    }
+    ESP_LOGI(TAG, "Teaching cancelled");
+}
+
+tracking::TeachState VideoStreamer::getTeachState() const {
+    return color_teacher_.state();
+}
+
+const tracking::ColorModel& VideoStreamer::getColorModel() const {
+    return color_teacher_.model();
 }
 
 //=============================================================================
@@ -1141,7 +1293,7 @@ bool VideoStreamer::processFrameCV(const AcquiredFrame& frame) {
     }
 
     // Stage 2: CV processing on RGB888 buffer
-    processCVFrame(rgb_buffer_, output_width_, output_height_);
+    //processCVFrame(rgb_buffer_, output_width_, output_height_);
 
     // Stage 3: RGB888 → YUV420
     auto rgb_to_yuv_config = buildPpaRgbToYuv(
@@ -1279,14 +1431,13 @@ void VideoStreamer::queueFrameForSending(const struct v4l2_buffer& enc_output_bu
 }
 
 //=============================================================================
-// Capture Loop (Refactored)
+// Capture Loop (Unified - source agnostic)
 //=============================================================================
 
 void VideoStreamer::captureLoop() {
-    ESP_LOGI(TAG, "Capture loop started (pipelined mode, %d encoder buffers)", ENCODER_OUTPUT_BUFFERS);
+    ESP_LOGI(TAG, "Capture loop started (%d encoder buffers)", ENCODER_OUTPUT_BUFFERS);
 
     uint64_t last_stats_time = esp_timer_get_time();
-    static bool logged_resolution = false;
 
     // Lazy initialization for JPEG mode
     // Must happen here (not in startStreaming) because this task has Internal RAM stack
@@ -1301,11 +1452,6 @@ void VideoStreamer::captureLoop() {
         ESP_LOGI(TAG, "JPEG mode initialized successfully");
     }
 
-    // JPEG frame rate limiting state
-    uint64_t last_frame_time_ms = 0;
-    const uint32_t jpeg_target_fps = 3;
-    const uint32_t jpeg_frame_interval_ms = 1000 / jpeg_target_fps;
-
     while (running_) {
         // Check for backpressure (front-end skip)
         if (shouldSkipFrame()) {
@@ -1315,109 +1461,89 @@ void VideoStreamer::captureLoop() {
             continue;
         }
 
-        // === Camera mode: pipelined (async encoder) ===
-        if (video_source_ == VideoSource::CAMERA) {
-            // Only acquire new frame if encoder has room
-            if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
-                AcquiredFrame frame;
-                if (acquireFrame(frame)) {
-                    // Process frame (CV or direct)
-                    bool success;
-                    if (cv_pipeline_enabled_) {
-                        success = processFrameCV(frame);
-                    } else {
-                        success = processFrameDirect(frame);
-                    }
+        // === FREEZE MODE: Resubmit same frame repeatedly ===
+        if (frozen_) {
+            // Check if visualization was updated (teaching iteration)
+            if (visualization_dirty_) {
+                visualization_dirty_ = false;
 
-                    // Release camera buffer immediately after PPA copies it
-                    releaseFrame(frame);
-
-                    // Submit to encoder if processing succeeded
-                    if (success) {
-                        submitToEncoder();
-                    }
+                // Convert RGB buffer back to YUV for encoding
+                auto rgb_to_yuv_config = buildPpaRgbToYuv(
+                    rgb_buffer_, output_width_, output_height_,
+                    yuv_output_buffer_, yuv_output_buffer_size_,
+                    true);  // blocking
+                esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_rgb_to_yuv_, &rgb_to_yuv_config);
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "RGB→YUV conversion failed: %d", ret);
                 }
+                ESP_LOGI(TAG, "Visualization updated - re-encoding frame");
             }
 
-            // Try to dequeue encoded frames (non-blocking)
+            if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
+                submitToEncoder();
+            }
+
             struct v4l2_buffer enc_output_buf;
             if (dequeueEncodedFrame(false, enc_output_buf)) {
                 queueFrameForSending(enc_output_buf);
             }
 
-            // Print statistics periodically
-            uint64_t current_time = esp_timer_get_time();
-            if ((current_time - last_stats_time) >= 1000000) {
-                uint64_t elapsed_us = current_time - video_start_pts_;
-                float elapsed_sec = elapsed_us / 1000000.0f;
-                float avg_fps = capture_frame_count_ / elapsed_sec;
+            vTaskDelay(pdMS_TO_TICKS(1000 / fps_));
+            continue;
+        }
 
-                ESP_LOGI(TAG, "Frame %lu: %.1f fps (avg), %d in encoder, %u skipped",
-                         (unsigned long)capture_frame_count_, avg_fps,
-                         frames_in_encoder_, frames_skipped_);
-                last_stats_time = current_time;
-            }
-
-            // Small delay if encoder pipeline is empty
-            if (frames_in_encoder_ == 0) {
-                vTaskDelay(pdMS_TO_TICKS(1));
-            }
-
-        // === JPEG mode: synchronous (blocking encoder) ===
-        } else {
+        // === NORMAL MODE: Acquire and process new frames ===
+        if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
             AcquiredFrame frame;
-            if (!acquireFrame(frame)) {
-                vTaskDelay(pdMS_TO_TICKS(100));
-                continue;
-            }
+            if (acquireFrame(frame)) {
+                // Process frame (CV or direct)
+                bool success = cv_pipeline_enabled_
+                    ? processFrameCV(frame)
+                    : processFrameDirect(frame);
 
-            // Log decoded resolution (first frame only)
-            if (!logged_resolution) {
-                ESP_LOGI(TAG, "JPEG decoded: %ux%u -> CV pipeline → %ux%u",
-                         frame.width, frame.height, output_width_, output_height_);
-                logged_resolution = true;
-            }
+                releaseFrame(frame);
 
-            // JPEG mode always uses CV pipeline (YUV→RGB→CV→RGB→YUV)
-            if (!processFrameCV(frame)) {
-                continue;
-            }
+                if (success) {
+                    // Check if freeze was requested
+                    if (freeze_requested_) {
+                        freeze_requested_ = false;
+                        frozen_ = true;
+                        ESP_LOGI(TAG, "Video frozen - RGB buffer preserved for region selection");
+                    }
 
-            // No need to release frame for JPEG mode (buffer is reused)
-
-            // Submit to encoder
-            if (!submitToEncoder()) {
-                continue;
-            }
-
-            // Wait for encoded frame (blocking)
-            struct v4l2_buffer enc_output_buf;
-            if (dequeueEncodedFrame(true, enc_output_buf)) {
-                queueFrameForSending(enc_output_buf);
-            }
-
-            // Print statistics periodically
-            uint64_t current_time = esp_timer_get_time();
-            if ((current_time - last_stats_time) >= 1000000) {
-                uint64_t elapsed_us = current_time - video_start_pts_;
-                float elapsed_sec = elapsed_us / 1000000.0f;
-                float avg_fps = capture_frame_count_ / elapsed_sec;
-
-                ESP_LOGI(TAG, "JPEG Frame %lu: %.1f fps (avg), %u skipped, %zu/%zu files",
-                         (unsigned long)capture_frame_count_, avg_fps, frames_skipped_,
-                         jpeg_reader_->getCurrentIndex(), jpeg_reader_->getFrameCount());
-                last_stats_time = current_time;
-            }
-
-            // Frame rate limiting for JPEG mode
-            if (last_frame_time_ms > 0) {
-                uint64_t now_ms = esp_timer_get_time() / 1000;
-                uint64_t elapsed_ms = now_ms - last_frame_time_ms;
-                if (elapsed_ms < jpeg_frame_interval_ms) {
-                    vTaskDelay(pdMS_TO_TICKS(jpeg_frame_interval_ms - elapsed_ms));
+                    submitToEncoder();
                 }
             }
-            last_frame_time_ms = esp_timer_get_time() / 1000;
+        }
+
+        // Dequeue encoded frame (non-blocking)
+        struct v4l2_buffer enc_output_buf;
+        if (dequeueEncodedFrame(false, enc_output_buf)) {
+            queueFrameForSending(enc_output_buf);
+        }
+
+        // Print statistics periodically
+        uint64_t current_time = esp_timer_get_time();
+        if ((current_time - last_stats_time) >= 1000000) {
+            uint64_t elapsed_us = current_time - video_start_pts_;
+            float elapsed_sec = elapsed_us / 1000000.0f;
+            float avg_fps = capture_frame_count_ / elapsed_sec;
+
+            ESP_LOGI(TAG, "Frame %lu: %.1f fps (avg), %d in encoder, %u skipped%s",
+                     (unsigned long)capture_frame_count_, avg_fps,
+                     frames_in_encoder_, frames_skipped_,
+                     frozen_ ? " [FROZEN]" : "");
+            last_stats_time = current_time;
+        }
+
+        // Small delay if encoder pipeline is empty
+        if (frames_in_encoder_ == 0) {
+            vTaskDelay(pdMS_TO_TICKS(1));
+        }
+
+        // JPEG mode runs slower to conserve resources
+        if (video_source_ == VideoSource::JPEG_FILES) {
+            vTaskDelay(pdMS_TO_TICKS(333));  // ~3 fps
         }
     }
 

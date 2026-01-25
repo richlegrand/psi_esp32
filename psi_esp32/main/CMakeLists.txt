@@ -7,6 +7,8 @@ set(SRCS
     "video_streamer.cpp"
     "jpeg_decoder.cpp"           # JPEG decoder (used if JPEG files detected)
     "jpeg_frame_reader.cpp"      # JPEG frame reader (used if JPEG files detected)
+    "contour_detector.cpp"       # Color tracking - contour detection
+    "color_teacher.cpp"          # Color tracking - iterative teaching
 )
 
 # All requirements (both camera and JPEG support)

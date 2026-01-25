@@ -86,12 +86,21 @@ public:
     // Handle incoming SWSP frame
     void handleSwspFrame(const rtc::binary& frame);
 
+    // Handle control message (JSON from browser)
+    void handleControlMessage(const std::string& message);
+
     // Set handler registry (from server)
     void setHandlers(const std::vector<httpd_uri_t>* handlers) {
         handlers_ = handlers;
     }
 
+    // Set video streamer reference (for control messages)
+    void setVideoStreamer(class VideoStreamer* vs) {
+        video_streamer_ = vs;
+    }
+
 private:
+    class VideoStreamer* video_streamer_ = nullptr;
     std::string client_id_;
     std::shared_ptr<rtc::PeerConnection> pc_;
     std::shared_ptr<rtc::DataChannel> dc_;
@@ -143,6 +152,10 @@ private:
 
     // HTTP handlers
     std::vector<httpd_uri_t> uri_handlers_;
+
+public:
+    // Accessors for C API
+    VideoStreamer* getVideoStreamer() { return video_streamer_.get(); }
 
     // Reconnection state
     std::atomic<bool> running_{false};

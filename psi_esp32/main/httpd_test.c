@@ -24,6 +24,12 @@
 #define LOGI(fmt, ...) ESP_LOGI(LOG_TAG, fmt, ##__VA_ARGS__)
 #define LOGE(fmt, ...) ESP_LOGE(LOG_TAG, fmt, ##__VA_ARGS__)
 #define FILE_BASE_PATH "/littlefs"
+
+// Video streamer C API (from httpd_server.cpp)
+extern esp_err_t httpd_video_freeze(httpd_handle_t handle);
+extern esp_err_t httpd_video_unfreeze(httpd_handle_t handle);
+extern bool httpd_video_is_frozen(httpd_handle_t handle);
+extern uint8_t* httpd_video_get_rgb_buffer(httpd_handle_t handle, uint32_t* width, uint32_t* height);
 #else
 #define LOGI(fmt, ...) printf(fmt "\n", ##__VA_ARGS__)
 #define LOGE(fmt, ...) printf("ERROR: " fmt "\n", ##__VA_ARGS__)
@@ -32,35 +38,83 @@
 
 #define CHUNK_SIZE  0x2000
 
-// Root page handler
+// Forward declaration
+httpd_handle_t httpd_test_get_handle(void);
+
+// Generic file handler - serves files from littlefs
+static esp_err_t file_handler(httpd_req_t *req, const char* filepath) {
+    LOGI("File handler: %s", filepath);
+
+    int fd = open(filepath, O_RDONLY);
+    if (fd < 0) {
+        LOGE("Failed to open file: %s", filepath);
+        return httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "File not found");
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) < 0) {
+        close(fd);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Failed to stat file");
+    }
+
+    // Set content type based on extension
+    if (strstr(filepath, ".html")) {
+        httpd_resp_set_type(req, "text/html");
+    } else if (strstr(filepath, ".js")) {
+        httpd_resp_set_type(req, "application/javascript");
+    } else if (strstr(filepath, ".css")) {
+        httpd_resp_set_type(req, "text/css");
+    } else if (strstr(filepath, ".jpg") || strstr(filepath, ".jpeg")) {
+        httpd_resp_set_type(req, "image/jpeg");
+    } else if (strstr(filepath, ".png")) {
+        httpd_resp_set_type(req, "image/png");
+    } else {
+        httpd_resp_set_type(req, "application/octet-stream");
+    }
+
+    LOGI("Streaming file: %ld bytes", (long)st.st_size);
+
+#ifdef ESP_PLATFORM
+    char *chunk = heap_caps_malloc(CHUNK_SIZE, MALLOC_CAP_INTERNAL);
+    if (!chunk) {
+        close(fd);
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Out of memory");
+    }
+#else
+    char chunk_buf[CHUNK_SIZE];
+    char *chunk = chunk_buf;
+#endif
+
+    ssize_t bytes_read;
+    esp_err_t result = ESP_OK;
+
+    while ((bytes_read = read(fd, chunk, CHUNK_SIZE)) > 0) {
+        if (httpd_resp_send_chunk(req, chunk, bytes_read) != ESP_OK) {
+            result = ESP_FAIL;
+            break;
+        }
+    }
+
+    close(fd);
+#ifdef ESP_PLATFORM
+    heap_caps_free(chunk);
+#endif
+
+    if (result == ESP_OK) {
+        httpd_resp_send_chunk(req, NULL, 0);
+    }
+    return result;
+}
+
+// Root page handler - serves index.html
 static esp_err_t root_handler(httpd_req_t *req) {
     LOGI("Root handler called");
-    const char* html =
-        "<!DOCTYPE html>\n"
-        "<html lang=\"en\">\n"
-        "<head>\n"
-        "    <meta charset=\"UTF-8\">\n"
-        "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n"
-        "    <title>PSI ESP32 Device</title>\n"
-        "</head>\n"
-        "<body>\n"
-        "\n"
-        "<h1>Hello from ESP32!</h1>\n"
-        "<p>This is a simple page served by an ESP32 device over WebRTC DataChannel.</p>\n"
-        "\n"
-        "<h2>Live Video:</h2>\n"
-        "<video autoplay playsinline muted controls width=\"640\" style=\"background: #000;\"></video>\n"
-        "<p id=\"video-status\">Waiting for video...</p>\n"
-        "\n"
-        "<h2>Images:</h2>\n"
-        "<img src=\"static/images/image1.jpg\" alt=\"Image 1\" width=\"300\">\n"
-        "<br>\n"
-        "<img src=\"static/images/image2.jpg\" alt=\"Image 2\" width=\"300\">\n"
-        "</body>\n"
-        "</html>\n";
+    return file_handler(req, FILE_BASE_PATH "/index.html");
+}
 
-    httpd_resp_send(req, html, HTTPD_RESP_USE_STRLEN);
-    return ESP_OK;
+// App.js handler
+static esp_err_t appjs_handler(httpd_req_t *req) {
+    return file_handler(req, FILE_BASE_PATH "/static/app.js");
 }
 
 // Image handler - serves static files using streaming
@@ -150,6 +204,60 @@ static esp_err_t hello_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+#ifdef ESP_PLATFORM
+// Video freeze handler - POST /api/freeze to freeze, DELETE /api/freeze to unfreeze
+static esp_err_t freeze_handler(httpd_req_t *req) {
+    LOGI("Freeze handler called: %s %s",
+         req->method == HTTP_POST ? "POST" : "DELETE", req->uri);
+
+    httpd_handle_t server = httpd_test_get_handle();
+    if (!server) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Server not ready");
+    }
+
+    esp_err_t result;
+    if (req->method == HTTP_POST) {
+        result = httpd_video_freeze(server);
+        if (result == ESP_OK) {
+            httpd_resp_set_type(req, "application/json");
+            httpd_resp_send(req, "{\"status\":\"freezing\"}", HTTPD_RESP_USE_STRLEN);
+        } else if (result == ESP_ERR_NOT_SUPPORTED) {
+            return httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "CV pipeline not enabled");
+        } else {
+            return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Freeze failed");
+        }
+    } else {
+        // DELETE - unfreeze
+        result = httpd_video_unfreeze(server);
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "{\"status\":\"live\"}", HTTPD_RESP_USE_STRLEN);
+    }
+
+    return ESP_OK;
+}
+
+// Video status handler - GET /api/video/status
+static esp_err_t video_status_handler(httpd_req_t *req) {
+    LOGI("Video status handler called");
+
+    httpd_handle_t server = httpd_test_get_handle();
+    if (!server) {
+        return httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Server not ready");
+    }
+
+    bool frozen = httpd_video_is_frozen(server);
+
+    char response[128];
+    snprintf(response, sizeof(response),
+             "{\"frozen\":%s}",
+             frozen ? "true" : "false");
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, response, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+#endif
+
 // URI handler definitions
 static const httpd_uri_t uri_root = {
     .uri       = "/",
@@ -162,6 +270,13 @@ static const httpd_uri_t uri_hello = {
     .uri       = "/hello",
     .method    = HTTP_GET,
     .handler   = hello_handler,
+    .user_ctx  = NULL
+};
+
+static const httpd_uri_t uri_appjs = {
+    .uri       = "/static/app.js",
+    .method    = HTTP_GET,
+    .handler   = appjs_handler,
     .user_ctx  = NULL
 };
 
@@ -178,6 +293,29 @@ static const httpd_uri_t uri_image2 = {
     .handler   = image_handler,
     .user_ctx  = NULL
 };
+
+#ifdef ESP_PLATFORM
+static const httpd_uri_t uri_freeze_post = {
+    .uri       = "/api/freeze",
+    .method    = HTTP_POST,
+    .handler   = freeze_handler,
+    .user_ctx  = NULL
+};
+
+static const httpd_uri_t uri_freeze_delete = {
+    .uri       = "/api/freeze",
+    .method    = HTTP_DELETE,
+    .handler   = freeze_handler,
+    .user_ctx  = NULL
+};
+
+static const httpd_uri_t uri_video_status = {
+    .uri       = "/api/video/status",
+    .method    = HTTP_GET,
+    .handler   = video_status_handler,
+    .user_ctx  = NULL
+};
+#endif
 
 // Global server handle
 static httpd_handle_t g_server = NULL;
@@ -204,8 +342,14 @@ esp_err_t httpd_test_start(void) {
     // Register handlers
     httpd_register_uri_handler(g_server, &uri_root);
     httpd_register_uri_handler(g_server, &uri_hello);
+    httpd_register_uri_handler(g_server, &uri_appjs);
     httpd_register_uri_handler(g_server, &uri_image1);
     httpd_register_uri_handler(g_server, &uri_image2);
+#ifdef ESP_PLATFORM
+    httpd_register_uri_handler(g_server, &uri_freeze_post);
+    httpd_register_uri_handler(g_server, &uri_freeze_delete);
+    httpd_register_uri_handler(g_server, &uri_video_status);
+#endif
 
     LOGI("Server started! Handlers registered.");
 
