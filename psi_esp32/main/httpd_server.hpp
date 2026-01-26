@@ -38,6 +38,7 @@ const uint16_t FLAG_FIN = 0x0004;  // Final frame
 class WebRTCSession;
 class WebRTCServer;
 class HandlerDispatcher;
+class ColorTracker;
 
 //=============================================================================
 // Internal Context Structure (stored in httpd_req_t.aux)
@@ -94,13 +95,19 @@ public:
         handlers_ = handlers;
     }
 
-    // Set video streamer reference (for control messages)
+    // Set video streamer reference
     void setVideoStreamer(class VideoStreamer* vs) {
         video_streamer_ = vs;
     }
 
+    // Set color tracker reference (for control messages)
+    void setColorTracker(ColorTracker* ct) {
+        color_tracker_ = ct;
+    }
+
 private:
     class VideoStreamer* video_streamer_ = nullptr;
+    ColorTracker* color_tracker_ = nullptr;
     std::string client_id_;
     std::shared_ptr<rtc::PeerConnection> pc_;
     std::shared_ptr<rtc::DataChannel> dc_;
@@ -150,12 +157,16 @@ private:
     // Video streaming (single VideoStreamer handles all clients)
     std::unique_ptr<class VideoStreamer> video_streamer_;
 
+    // Color tracking (freeze, teaching, tracking - all CV operations)
+    std::unique_ptr<ColorTracker> color_tracker_;
+
     // HTTP handlers
     std::vector<httpd_uri_t> uri_handlers_;
 
 public:
     // Accessors for C API
     VideoStreamer* getVideoStreamer() { return video_streamer_.get(); }
+    ColorTracker* getColorTracker() { return color_tracker_.get(); }
 
     // Reconnection state
     std::atomic<bool> running_{false};

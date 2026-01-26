@@ -9,6 +9,7 @@ set(SRCS
     "jpeg_frame_reader.cpp"      # JPEG frame reader (used if JPEG files detected)
     "contour_detector.cpp"       # Color tracking - contour detection
     "color_teacher.cpp"          # Color tracking - iterative teaching
+    "color_tracker.cpp"          # Color tracking - main tracker with callback
 )
 
 # All requirements (both camera and JPEG support)

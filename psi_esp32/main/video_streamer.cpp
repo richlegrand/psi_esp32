@@ -94,10 +94,6 @@ VideoStreamer::VideoStreamer(uint32_t output_width, uint32_t output_height, uint
       ppa_done_sem_(nullptr),
       capture_task_(nullptr), send_task_(nullptr),
       running_(false), force_keyframe_(false),
-      freeze_requested_(true), frozen_(false),  // Start frozen for region selection
-      teach_iterate_requested_(false), teach_accept_requested_(false), visualization_dirty_(false),
-      rgb_original_(nullptr), rgb_original_size_(0),
-      tracking_enabled_(false), tracking_detector_(100),
       video_start_pts_(0), capture_frame_count_(0),
       frames_in_encoder_(0), frames_skipped_(0),
       decoded_yuv_buffer_(nullptr), decoded_yuv_buffer_size_(0)
@@ -568,12 +564,6 @@ void VideoStreamer::cleanup() {
             rgb_buffer_size_ = 0;
         }
 
-        if (rgb_original_) {
-            heap_caps_free(rgb_original_);
-            rgb_original_ = nullptr;
-            rgb_original_size_ = 0;
-        }
-
         if (ppa_rgb_to_yuv_) {
             ppa_unregister_client(ppa_rgb_to_yuv_);
             ppa_rgb_to_yuv_ = nullptr;
@@ -790,11 +780,6 @@ void VideoStreamer::stopStreaming() {
     ESP_LOGI(TAG, "Stopping video streamer...");
     running_ = false;
 
-    // Reset freeze state for next session
-    // Set freeze_requested_ = true so next session also starts frozen
-    frozen_ = false;
-    freeze_requested_ = true;
-
     // Wait for tasks to finish
     if (capture_task_) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -902,296 +887,6 @@ uint32_t VideoStreamer::testProcessing() {
     return sum;
 }
 
-//=============================================================================
-// CV Processing Hook (Phase 1: Placeholder)
-//=============================================================================
-
-void VideoStreamer::processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t height) {
-    // CV processing placeholder - currently just tracking overlay
-    // Future: edge detection, motion detection, etc.
-
-    // Example: Draw a simple test pattern (disabled)
-    // for (uint32_t y = 0; y < 10; y++) {
-    //     for (uint32_t x = 0; x < width; x++) {
-    //         uint32_t idx = (y * width + x) * 3;
-    //         rgb_data[idx + 0] = 0;
-    //         rgb_data[idx + 1] = 0;
-    //         rgb_data[idx + 2] = 0xff; // Red line at top
-    //     }
-    // }
-}
-
-//=============================================================================
-// Tracking Visualization
-//=============================================================================
-
-void VideoStreamer::renderTrackingVisualization() {
-    if (!tracking_enabled_ || !rgb_buffer_ || tracking_contours_.empty()) {
-        return;
-    }
-
-    int width = static_cast<int>(output_width_);
-    int height = static_cast<int>(output_height_);
-    int stride = width * 3;
-
-    // Helper: draw semi-transparent tint over contour runs
-    auto drawContourTinted = [&](const tracking::Contour& contour,
-                                  uint8_t tintR, uint8_t tintG, uint8_t tintB,
-                                  float alpha) {
-        float invAlpha = 1.0f - alpha;
-
-        for (const auto& run : contour.runs) {
-            if (run.y < 0 || run.y >= height) continue;
-
-            uint8_t* row = rgb_buffer_ + run.y * stride;
-            int xStart = std::max(0, run.xStart);
-            int xEnd = std::min(run.xEnd, width - 1);
-
-            for (int x = xStart; x <= xEnd; x++) {
-                int idx = x * 3;
-                row[idx]     = static_cast<uint8_t>(row[idx]     * invAlpha + tintR * alpha);
-                row[idx + 1] = static_cast<uint8_t>(row[idx + 1] * invAlpha + tintG * alpha);
-                row[idx + 2] = static_cast<uint8_t>(row[idx + 2] * invAlpha + tintB * alpha);
-            }
-        }
-    };
-
-    // Helper: draw contour outline using convex hull
-    auto drawContourOutline = [&](const tracking::Contour& contour,
-                                   uint8_t r, uint8_t g, uint8_t b) {
-        std::vector<tracking::Point> hull = contour.convexHull();
-        if (hull.size() < 2) return;
-
-        // Bresenham line drawing
-        auto drawLine = [&](tracking::Point p0, tracking::Point p1) {
-            int dx = std::abs(p1.x - p0.x);
-            int dy = std::abs(p1.y - p0.y);
-            int sx = (p0.x < p1.x) ? 1 : -1;
-            int sy = (p0.y < p1.y) ? 1 : -1;
-            int err = dx - dy;
-
-            while (true) {
-                if (p0.x >= 0 && p0.x < width && p0.y >= 0 && p0.y < height) {
-                    int idx = p0.y * stride + p0.x * 3;
-                    rgb_buffer_[idx]     = r;
-                    rgb_buffer_[idx + 1] = g;
-                    rgb_buffer_[idx + 2] = b;
-                }
-
-                if (p0.x == p1.x && p0.y == p1.y) break;
-
-                int e2 = 2 * err;
-                if (e2 > -dy) { err -= dy; p0.x += sx; }
-                if (e2 < dx)  { err += dx; p0.y += sy; }
-            }
-        };
-
-        for (size_t i = 0; i < hull.size(); i++) {
-            size_t j = (i + 1) % hull.size();
-            drawLine(hull[i], hull[j]);
-        }
-    };
-
-    // Helper: draw crosshair at point
-    auto drawCross = [&](int cx, int cy, int size, uint8_t r, uint8_t g, uint8_t b) {
-        for (int i = -size; i <= size; i++) {
-            // Horizontal
-            int x = cx + i;
-            if (x >= 0 && x < width && cy >= 0 && cy < height) {
-                int idx = cy * stride + x * 3;
-                rgb_buffer_[idx]     = r;
-                rgb_buffer_[idx + 1] = g;
-                rgb_buffer_[idx + 2] = b;
-            }
-            // Vertical
-            int y = cy + i;
-            if (cx >= 0 && cx < width && y >= 0 && y < height) {
-                int idx = y * stride + cx * 3;
-                rgb_buffer_[idx]     = r;
-                rgb_buffer_[idx + 1] = g;
-                rgb_buffer_[idx + 2] = b;
-            }
-        }
-    };
-
-    // Find largest contour
-    const tracking::Contour* largest = nullptr;
-    int maxArea = 0;
-    for (const auto& c : tracking_contours_) {
-        if (c.area > maxArea) {
-            maxArea = c.area;
-            largest = &c;
-        }
-    }
-
-    // Draw all non-primary contours in gray (semi-transparent)
-    for (const auto& c : tracking_contours_) {
-        if (&c != largest) {
-            drawContourTinted(c, 128, 128, 128, 0.25f);  // Gray tint
-            drawContourOutline(c, 100, 100, 100);        // Gray outline
-        }
-    }
-
-    // Draw largest contour highlighted
-    if (largest) {
-        // Orange tint for primary tracking target
-        drawContourTinted(*largest, 255, 165, 0, 0.35f);
-
-        // Cyan outline
-        drawContourOutline(*largest, 0, 255, 255);
-
-        // Red crosshair at centroid
-        tracking::Point center = largest->centroid();
-        drawCross(center.x, center.y, 6, 255, 0, 0);
-    }
-}
-
-//=============================================================================
-// Freeze Mode Control
-//=============================================================================
-
-void VideoStreamer::requestFreeze() {
-    if (!cv_pipeline_enabled_) {
-        ESP_LOGW(TAG, "Freeze mode requires CV pipeline to be enabled (for RGB buffer access)");
-        return;
-    }
-    if (frozen_) {
-        ESP_LOGW(TAG, "Already frozen");
-        return;
-    }
-    ESP_LOGI(TAG, "Freeze requested - will freeze on next frame");
-    freeze_requested_ = true;
-}
-
-void VideoStreamer::unfreeze() {
-    if (!frozen_) {
-        ESP_LOGW(TAG, "Not frozen");
-        return;
-    }
-    // Cancel any ongoing teaching
-    if (color_teacher_.state() != tracking::TeachState::IDLE &&
-        color_teacher_.state() != tracking::TeachState::ACCEPTED) {
-        color_teacher_.cancel();
-    }
-    ESP_LOGI(TAG, "Unfreezing - resuming live video");
-    frozen_ = false;
-}
-
-//=============================================================================
-// Color Teaching Control
-//=============================================================================
-
-bool VideoStreamer::startTeaching(float roi_x, float roi_y, float roi_w, float roi_h) {
-    if (!cv_pipeline_enabled_) {
-        ESP_LOGW(TAG, "Teaching requires CV pipeline to be enabled");
-        return false;
-    }
-    if (!frozen_) {
-        ESP_LOGW(TAG, "Must freeze video before starting teaching");
-        return false;
-    }
-    if (!rgb_buffer_) {
-        ESP_LOGE(TAG, "RGB buffer not available");
-        return false;
-    }
-
-    // Save a copy of the original RGB buffer for subsequent iterations
-    if (!rgb_original_) {
-        rgb_original_size_ = rgb_buffer_size_;
-        rgb_original_ = (uint8_t*)heap_caps_malloc(rgb_original_size_, MALLOC_CAP_SPIRAM);
-        if (!rgb_original_) {
-            ESP_LOGE(TAG, "Failed to allocate RGB original buffer");
-            return false;
-        }
-    }
-    memcpy(rgb_original_, rgb_buffer_, rgb_buffer_size_);
-    ESP_LOGI(TAG, "Saved original RGB buffer (%u bytes)", (unsigned)rgb_buffer_size_);
-
-    // Calculate stride (RGB888 = 3 bytes per pixel)
-    int stride = output_width_ * 3;
-
-    bool result = color_teacher_.start(rgb_buffer_, output_width_, output_height_, stride,
-                                        roi_x, roi_y, roi_w, roi_h);
-
-    if (result) {
-        ESP_LOGI(TAG, "Teaching started with ROI (%.2f, %.2f) %.2fx%.2f",
-                 roi_x, roi_y, roi_w, roi_h);
-        // Perform first iteration immediately (this sets visualization_dirty_)
-        iterateTeaching();
-    }
-    return result;
-}
-
-bool VideoStreamer::iterateTeaching() {
-    if (!frozen_ || !rgb_buffer_) {
-        ESP_LOGW(TAG, "Cannot iterate: not frozen or no RGB buffer");
-        return false;
-    }
-
-    auto state = color_teacher_.state();
-    if (state != tracking::TeachState::BOOTSTRAPPING &&
-        state != tracking::TeachState::ITERATING &&
-        state != tracking::TeachState::CONVERGED) {
-        ESP_LOGW(TAG, "Cannot iterate: teaching not in progress (state=%d)", (int)state);
-        return false;
-    }
-
-    // Restore original RGB buffer before detection (visualization may have modified it)
-    if (rgb_original_) {
-        memcpy(rgb_buffer_, rgb_original_, rgb_buffer_size_);
-    }
-
-    int stride = output_width_ * 3;
-    bool result = color_teacher_.iterate(rgb_buffer_, output_width_, output_height_, stride);
-
-    if (result) {
-        // Render visualization to RGB buffer
-        color_teacher_.renderVisualization(rgb_buffer_, output_width_, output_height_, stride);
-        // Mark as dirty so frozen loop will re-encode
-        visualization_dirty_ = true;
-    }
-
-    return result;
-}
-
-void VideoStreamer::acceptTeaching() {
-    color_teacher_.accept();
-
-    // Copy the accepted model for tracking
-    tracking_model_ = color_teacher_.model();
-    tracking_enabled_ = true;
-    tracking_contours_.clear();
-
-    ESP_LOGI(TAG, "Tracking enabled: mean=(%.4f, %.4f), threshold_sq=%.2f",
-             tracking_model_.mean_u, tracking_model_.mean_v, tracking_model_.threshold_sq);
-
-    // Free the original buffer copy
-    if (rgb_original_) {
-        heap_caps_free(rgb_original_);
-        rgb_original_ = nullptr;
-    }
-    ESP_LOGI(TAG, "Teaching accepted - model saved, tracking active");
-    // Unfreeze automatically after accepting
-    unfreeze();
-}
-
-void VideoStreamer::cancelTeaching() {
-    color_teacher_.cancel();
-    // Free the original buffer copy
-    if (rgb_original_) {
-        heap_caps_free(rgb_original_);
-        rgb_original_ = nullptr;
-    }
-    ESP_LOGI(TAG, "Teaching cancelled");
-}
-
-tracking::TeachState VideoStreamer::getTeachState() const {
-    return color_teacher_.state();
-}
-
-const tracking::ColorModel& VideoStreamer::getColorModel() const {
-    return color_teacher_.model();
-}
 
 //=============================================================================
 // PPA Configuration Helpers
@@ -1404,7 +1099,7 @@ void VideoStreamer::releaseFrame(AcquiredFrame& frame) {
 //=============================================================================
 
 bool VideoStreamer::processFrameCV(const AcquiredFrame& frame) {
-    // CV Pipeline: YUV420 → RGB888 → CV processing → RGB888 → YUV420
+    // CV Pipeline: YUV420 → RGB888 → callback → RGB888 → YUV420
 
     // Stage 1: YUV420 → RGB888 (with scaling)
     auto yuv_to_rgb_config = buildPpaYuvToRgb(
@@ -1419,42 +1114,20 @@ bool VideoStreamer::processFrameCV(const AcquiredFrame& frame) {
         return false;
     }
 
-    // Stage 2: CV processing on RGB888 buffer
-    if (tracking_enabled_) {
+    // Stage 2: Call CV callback if set
+    uint8_t* rgb_to_encode = rgb_buffer_;
+    if (frame_callback_) {
         int stride = output_width_ * 3;
-        int minAreaPixels = static_cast<int>(0.001f * output_width_ * output_height_);
+        Frame input{rgb_buffer_, static_cast<int>(output_width_), static_cast<int>(output_height_), stride};
+        Frame output = frame_callback_(input);
 
-        tracking_detector_.setMinArea(minAreaPixels);
-
-        // Time detection
-        uint64_t t0 = esp_timer_get_time();
-        tracking_detector_.detect(rgb_buffer_, output_width_, output_height_, stride,
-                                  tracking_model_, tracking_contours_);
-        uint64_t t1 = esp_timer_get_time();
-
-        // Time convex hull computation (for all contours)
-        uint64_t hull_time = 0;
-        for (const auto& c : tracking_contours_) {
-            uint64_t h0 = esp_timer_get_time();
-            auto hull = c.convexHull();
-            uint64_t h1 = esp_timer_get_time();
-            hull_time += (h1 - h0);
-            (void)hull;  // Prevent optimization
-        }
-
-        // Log timing every frame
-        ESP_LOGI(TAG, "Tracking: detect=%llu us, hull=%llu us (%zu contours)",
-                 (unsigned long long)(t1 - t0),
-                 (unsigned long long)hull_time,
-                 tracking_contours_.size());
-
-        // Render tracking overlay onto RGB buffer
-        renderTrackingVisualization();
+        // Use output frame's data (may be same as input or different)
+        rgb_to_encode = output.data;
     }
 
     // Stage 3: RGB888 → YUV420
     auto rgb_to_yuv_config = buildPpaRgbToYuv(
-        rgb_buffer_, output_width_, output_height_,
+        rgb_to_encode, output_width_, output_height_,
         yuv_output_buffer_, yuv_output_buffer_size_,
         true  // blocking
     );
@@ -1618,42 +1291,11 @@ void VideoStreamer::captureLoop() {
             continue;
         }
 
-        // === FREEZE MODE: Resubmit same frame repeatedly ===
-        if (frozen_) {
-            // Check if visualization was updated (teaching iteration)
-            if (visualization_dirty_) {
-                visualization_dirty_ = false;
-
-                // Convert RGB buffer back to YUV for encoding
-                auto rgb_to_yuv_config = buildPpaRgbToYuv(
-                    rgb_buffer_, output_width_, output_height_,
-                    yuv_output_buffer_, yuv_output_buffer_size_,
-                    true);  // blocking
-                esp_err_t ret = ppa_do_scale_rotate_mirror(ppa_rgb_to_yuv_, &rgb_to_yuv_config);
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "RGB→YUV conversion failed: %d", ret);
-                }
-                ESP_LOGI(TAG, "Visualization updated - re-encoding frame");
-            }
-
-            if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
-                submitToEncoder();
-            }
-
-            struct v4l2_buffer enc_output_buf;
-            if (dequeueEncodedFrame(false, enc_output_buf)) {
-                queueFrameForSending(enc_output_buf);
-            }
-
-            vTaskDelay(pdMS_TO_TICKS(1000 / fps_));
-            continue;
-        }
-
-        // === NORMAL MODE: Acquire and process new frames ===
+        // Acquire and process frames
         if (frames_in_encoder_ < ENCODER_OUTPUT_BUFFERS) {
             AcquiredFrame frame;
             if (acquireFrame(frame)) {
-                // Process frame (CV or direct)
+                // Process frame (CV pipeline with callback, or direct scaling)
                 bool success = cv_pipeline_enabled_
                     ? processFrameCV(frame)
                     : processFrameDirect(frame);
@@ -1661,13 +1303,6 @@ void VideoStreamer::captureLoop() {
                 releaseFrame(frame);
 
                 if (success) {
-                    // Check if freeze was requested
-                    if (freeze_requested_) {
-                        freeze_requested_ = false;
-                        frozen_ = true;
-                        ESP_LOGI(TAG, "Video frozen - RGB buffer preserved for region selection");
-                    }
-
                     submitToEncoder();
                 }
             }
@@ -1686,10 +1321,9 @@ void VideoStreamer::captureLoop() {
             float elapsed_sec = elapsed_us / 1000000.0f;
             float avg_fps = capture_frame_count_ / elapsed_sec;
 
-            ESP_LOGI(TAG, "Frame %lu: %.1f fps (avg), %d in encoder, %u skipped%s",
+            ESP_LOGI(TAG, "Frame %lu: %.1f fps (avg), %d in encoder, %u skipped",
                      (unsigned long)capture_frame_count_, avg_fps,
-                     frames_in_encoder_, frames_skipped_,
-                     frozen_ ? " [FROZEN]" : "");
+                     frames_in_encoder_, frames_skipped_);
             last_stats_time = current_time;
         }
 

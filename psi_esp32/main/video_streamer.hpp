@@ -30,7 +30,7 @@ extern "C" {
 
 #include "jpeg_decoder.hpp"
 #include "jpeg_frame_reader.hpp"
-#include "color_teacher.hpp"
+#include "frame.hpp"
 
 enum class VideoSource {
     CAMERA,
@@ -74,37 +74,13 @@ public:
     uint32_t getHeight() const { return output_height_; }
     uint32_t getFPS() const { return fps_; }
 
-    // Freeze mode control - for region selection in browser
-    // When frozen, the same frame is sent repeatedly and RGB buffer is preserved
-    void requestFreeze();                   // Request freeze on next frame
-    bool isFrozen() const { return frozen_; }
-    void unfreeze();                        // Exit freeze mode, resume live video
-
-    // Access RGB buffer (only valid when frozen and CV pipeline enabled)
-    uint8_t* getRgbBuffer() const { return rgb_buffer_; }
-    size_t getRgbBufferSize() const { return rgb_buffer_size_; }
+    // CV pipeline enabled check
     bool isCvPipelineEnabled() const { return cv_pipeline_enabled_; }
 
-    // Color teaching control
-    // Start teaching with ROI (normalized 0-1 coordinates)
-    bool startTeaching(float roi_x, float roi_y, float roi_w, float roi_h);
-    // Perform one teaching iteration
-    bool iterateTeaching();
-    // Accept current color model
-    void acceptTeaching();
-    // Cancel teaching
-    void cancelTeaching();
-    // Get teaching state
-    tracking::TeachState getTeachState() const;
-    // Get current color model (only valid after teaching accepted)
-    const tracking::ColorModel& getColorModel() const;
-
-    // Tracking state (active after teaching accepted)
-    bool isTrackingEnabled() const { return tracking_enabled_; }
-    // Stop tracking (disable color detection overlay)
-    void stopTracking() { tracking_enabled_ = false; }
-    // Get detected contours from current frame (for sending to browser)
-    const std::vector<tracking::Contour>& getTrackingContours() const { return tracking_contours_; }
+    // Set frame callback for CV processing
+    // Callback receives RGB frame and returns frame to encode
+    // Set to nullptr to disable CV processing
+    void setFrameCallback(FrameCallback cb) { frame_callback_ = cb; }
 
 private:
     // Configuration
@@ -158,23 +134,8 @@ private:
     std::atomic<bool> running_;
     std::atomic<bool> force_keyframe_;
 
-    // Freeze mode state (for region selection)
-    std::atomic<bool> freeze_requested_;    // Set by requestFreeze(), cleared by captureLoop
-    std::atomic<bool> frozen_;              // True while video is frozen
-
-    // Color teaching
-    tracking::ColorTeacher color_teacher_;
-    std::atomic<bool> teach_iterate_requested_;   // Request next iteration
-    std::atomic<bool> teach_accept_requested_;    // Request accept model
-    std::atomic<bool> visualization_dirty_;       // RGB buffer modified, needs re-encode
-    uint8_t* rgb_original_;                       // Copy of original RGB for teaching iterations
-    size_t rgb_original_size_;
-
-    // Color tracking (active after teaching accepted)
-    std::atomic<bool> tracking_enabled_;          // True when tracking is active
-    tracking::ColorModel tracking_model_;         // Copy of accepted color model
-    tracking::ContourDetector tracking_detector_; // Detector instance for tracking
-    std::vector<tracking::Contour> tracking_contours_;  // Detected contours per frame
+    // Frame callback for CV processing
+    FrameCallback frame_callback_;
 
     // Track management (one track per client)
     std::map<std::string, std::shared_ptr<rtc::Track>> tracks_;
@@ -208,12 +169,6 @@ private:
     // Capture loop (runs in capture_task_)
     static void captureTaskEntry(void* arg);
     void captureLoop();
-
-    // CV processing hook (runs on RGB888 buffer)
-    void processCVFrame(uint8_t* rgb_data, uint32_t width, uint32_t height);
-
-    // Tracking visualization (draws detected contours on RGB buffer)
-    void renderTrackingVisualization();
 
     // Test processing (PSRAM bandwidth test)
     uint32_t testProcessing();

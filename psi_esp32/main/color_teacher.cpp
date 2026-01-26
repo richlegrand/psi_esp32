@@ -20,10 +20,8 @@ ColorTeacher::ColorTeacher()
     , bestContour_(nullptr)
     , roiX_(0), roiY_(0), roiW_(0), roiH_(0)
     , iteration_(0)
-    , prevArea_(0)
     , minAreaFraction_(0.001f)   // 0.1% of image
     , teachThreshold_(3.5f)      // Larger threshold during teaching
-    , convergenceTolerance_(0.05f) // 5% area change
 {
 }
 
@@ -73,7 +71,6 @@ bool ColorTeacher::start(const uint8_t* rgb_buffer, int width, int height, int s
 
     state_ = TeachState::BOOTSTRAPPING;
     iteration_ = 0;
-    prevArea_ = 0;
     bestContour_ = nullptr;
     contours_.clear();
 
@@ -122,34 +119,20 @@ bool ColorTeacher::iterate(const uint8_t* rgb_buffer, int width, int height, int
     stats_.reset();
     stats_.addContour(rgb_buffer, stride, *bestContour_, model_);
 
-    int area = bestContour_->area;
-    int nContours = static_cast<int>(contours_.size());
-
-    // Compute area change
-    float change = (prevArea_ > 0)
-        ? std::abs(area - prevArea_) / static_cast<float>(prevArea_)
-        : 1.0f;
-    bool converged = (prevArea_ > 0) && (change < convergenceTolerance_);
-
-    LOGI("Iteration %d: %d contours, area=%d, change=%.3f, mean=(%.4f, %.4f)",
-         iteration_, nContours, area, change, model_.mean_u, model_.mean_v);
-
-    if (converged) {
-        state_ = TeachState::CONVERGED;
-        LOGI("Converged at iteration %d", iteration_);
-    }
+    LOGI("Iteration %d: %d contours, area=%d, mean=(%.4f, %.4f)",
+         iteration_, static_cast<int>(contours_.size()), bestContour_->area,
+         model_.mean_u, model_.mean_v);
 
     // Update model from collected stats
     if (stats_.count >= 10) {
         model_ = stats_.computeModel(teachThreshold_);
     }
 
-    prevArea_ = area;
     return true;
 }
 
 void ColorTeacher::accept() {
-    if (state_ == TeachState::ITERATING || state_ == TeachState::CONVERGED) {
+    if (state_ == TeachState::ITERATING) {
         state_ = TeachState::ACCEPTED;
         LOGI("Model accepted: mean=(%.4f, %.4f)", model_.mean_u, model_.mean_v);
     }

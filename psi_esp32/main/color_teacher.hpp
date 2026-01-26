@@ -14,7 +14,6 @@ enum class TeachState {
     IDLE,           // No teaching in progress
     BOOTSTRAPPING,  // Collecting initial samples from ROI
     ITERATING,      // Running iterative refinement
-    CONVERGED,      // Model has converged (area change below threshold)
     ACCEPTED        // User accepted the model
 };
 
@@ -53,9 +52,6 @@ public:
     // Get iteration count
     int iteration() const { return iteration_; }
 
-    // Check if converged
-    bool isConverged() const { return state_ == TeachState::CONVERGED; }
-
     // Render visualization to RGB buffer
     // Highlights detected pixels and draws contour info
     void renderVisualization(uint8_t* rgb_buffer, int width, int height, int stride);
@@ -63,7 +59,6 @@ public:
     // Configuration
     void setMinAreaFraction(float frac) { minAreaFraction_ = frac; }
     void setTeachThreshold(float t) { teachThreshold_ = t; }
-    void setConvergenceTolerance(float t) { convergenceTolerance_ = t; }
 
 private:
     TeachState state_;
@@ -79,12 +74,10 @@ private:
 
     // Iteration tracking
     int iteration_;
-    int prevArea_;
 
     // Configuration
     float minAreaFraction_;     // Minimum contour area as fraction of image
     float teachThreshold_;      // Mahalanobis threshold during teaching
-    float convergenceTolerance_; // Area change tolerance for convergence
 
     // Find contour closest to ROI center
     const Contour* findClosestContour(const Point& target) const;

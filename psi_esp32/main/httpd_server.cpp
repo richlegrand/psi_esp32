@@ -9,6 +9,7 @@
 
 #include "httpd_server.hpp"
 #include "video_streamer.hpp"
+#include "color_tracker.hpp"
 #include <cJSON.h>
 #include <cstring>
 #include "esp_log.h"
@@ -204,7 +205,15 @@ void WebRTCSession::handleControlMessage(const std::string& message) {
 
     ESP_LOGI(TAG, "Control: id=%s prop=%s", id, prop);
 
-    // Handle video selection (normalized coordinates 0-1) - starts teaching
+    // Handle selection start (mousedown/touchstart) - freeze video
+    if (strcmp(id, "video") == 0 && strcmp(prop, "selectionStart") == 0) {
+        ESP_LOGI(TAG, "Selection started - freezing video");
+        if (color_tracker_ && !color_tracker_->isFrozen()) {
+            color_tracker_->requestFreeze();
+        }
+    }
+
+    // Handle video selection complete (normalized coordinates 0-1) - starts teaching
     if (strcmp(id, "video") == 0 && strcmp(prop, "selection") == 0) {
         if (val_item && cJSON_IsArray(val_item) && cJSON_GetArraySize(val_item) >= 4) {
             float x = (float)cJSON_GetArrayItem(val_item, 0)->valuedouble;
@@ -212,15 +221,15 @@ void WebRTCSession::handleControlMessage(const std::string& message) {
             float w = (float)cJSON_GetArrayItem(val_item, 2)->valuedouble;
             float h = (float)cJSON_GetArrayItem(val_item, 3)->valuedouble;
 
-            ESP_LOGI(TAG, "Video selection: x=%.3f y=%.3f w=%.3f h=%.3f", x, y, w, h);
+            ESP_LOGI(TAG, "Video selection complete: x=%.3f y=%.3f w=%.3f h=%.3f", x, y, w, h);
 
-            if (video_streamer_) {
-                // Start teaching with selected region
-                if (video_streamer_->startTeaching(x, y, w, h)) {
+            if (color_tracker_) {
+                // Start teaching with selected region (frame should already be frozen)
+                if (color_tracker_->startTeaching(x, y, w, h)) {
                     ESP_LOGI(TAG, "Teaching started with selection");
                 } else {
                     ESP_LOGW(TAG, "Failed to start teaching - unfreezing");
-                    video_streamer_->unfreeze();
+                    color_tracker_->unfreeze();
                 }
             }
         }
@@ -229,25 +238,25 @@ void WebRTCSession::handleControlMessage(const std::string& message) {
     // Handle "Next" button click - iterate teaching
     if (strcmp(id, "next-btn") == 0 && strcmp(prop, "clicked") == 0) {
         ESP_LOGI(TAG, "Next button clicked - iterating teaching");
-        if (video_streamer_) {
-            video_streamer_->iterateTeaching();
+        if (color_tracker_) {
+            color_tracker_->iterateTeaching();
         }
     }
 
     // Handle "Accept" button click - accept color model
     if (strcmp(id, "accept-btn") == 0 && strcmp(prop, "clicked") == 0) {
         ESP_LOGI(TAG, "Accept button clicked - accepting model");
-        if (video_streamer_) {
-            video_streamer_->acceptTeaching();
+        if (color_tracker_) {
+            color_tracker_->acceptTeaching();
         }
     }
 
     // Handle "Cancel" button click - cancel teaching and unfreeze
     if (strcmp(id, "cancel-btn") == 0 && strcmp(prop, "clicked") == 0) {
         ESP_LOGI(TAG, "Cancel button clicked - cancelling teaching");
-        if (video_streamer_) {
-            video_streamer_->cancelTeaching();
-            video_streamer_->unfreeze();
+        if (color_tracker_) {
+            color_tracker_->cancelTeaching();
+            color_tracker_->unfreeze();
         }
     }
 
@@ -266,8 +275,20 @@ WebRTCServer::WebRTCServer(const std::string& uid, const std::string& server_url
     // Output: 640x360 @ 25fps
     // Camera resolution auto-detected (set via menuconfig: 1280x720 or 1920x1080)
     // PPA scaling automatically enabled if output != camera
-    // CV pipeline disabled by default (pass true as 4th param to enable YUV→RGB→CV→YUV pipeline)
+    // CV pipeline enabled to allow ColorTracker processing
     video_streamer_ = std::make_unique<VideoStreamer>(640, 360, 25, true);
+
+    // Create color tracker for freeze/teaching/tracking
+    color_tracker_ = std::make_unique<ColorTracker>();
+
+    // Connect ColorTracker as frame callback
+    // Capture the raw pointer since VideoStreamer outlives this lambda
+    ColorTracker* tracker = color_tracker_.get();
+    video_streamer_->setFrameCallback([tracker](const Frame& input) {
+        return tracker->onFrame(input);
+    });
+
+    ESP_LOGI(TAG, "ColorTracker callback connected to VideoStreamer");
 }
 
 WebRTCServer::~WebRTCServer() {
@@ -489,6 +510,7 @@ void WebRTCServer::handleRequest(const std::string& client_id) {
 
         auto session = std::make_shared<WebRTCSession>(client_id, pc, dc);
         session->setVideoStreamer(video_streamer_.get());
+        session->setColorTracker(color_tracker_.get());
 
         dc->onMessage([session](std::variant<rtc::binary, std::string> data) {
             if (std::holds_alternative<rtc::binary>(data)) {
@@ -1030,7 +1052,7 @@ int httpd_req_recv(httpd_req_t *r, char *buf, size_t buf_len) {
 }
 
 //=============================================================================
-// Video Streamer C API (for freeze/teach functionality)
+// Color Tracker C API (for freeze/teach functionality)
 //=============================================================================
 
 esp_err_t httpd_video_freeze(httpd_handle_t handle) {
@@ -1038,16 +1060,12 @@ esp_err_t httpd_video_freeze(httpd_handle_t handle) {
         return ESP_ERR_INVALID_ARG;
     }
     auto ctx = (httpd_server_context*)handle;
-    VideoStreamer* vs = ctx->server->getVideoStreamer();
-    if (!vs) {
-        ESP_LOGE(TAG, "VideoStreamer not initialized");
+    ColorTracker* ct = ctx->server->getColorTracker();
+    if (!ct) {
+        ESP_LOGE(TAG, "ColorTracker not initialized");
         return ESP_ERR_INVALID_STATE;
     }
-    if (!vs->isCvPipelineEnabled()) {
-        ESP_LOGW(TAG, "Freeze requires CV pipeline to be enabled");
-        return ESP_ERR_NOT_SUPPORTED;
-    }
-    vs->requestFreeze();
+    ct->requestFreeze();
     return ESP_OK;
 }
 
@@ -1056,11 +1074,11 @@ esp_err_t httpd_video_unfreeze(httpd_handle_t handle) {
         return ESP_ERR_INVALID_ARG;
     }
     auto ctx = (httpd_server_context*)handle;
-    VideoStreamer* vs = ctx->server->getVideoStreamer();
-    if (!vs) {
+    ColorTracker* ct = ctx->server->getColorTracker();
+    if (!ct) {
         return ESP_ERR_INVALID_STATE;
     }
-    vs->unfreeze();
+    ct->unfreeze();
     return ESP_OK;
 }
 
@@ -1069,25 +1087,22 @@ bool httpd_video_is_frozen(httpd_handle_t handle) {
         return false;
     }
     auto ctx = (httpd_server_context*)handle;
-    VideoStreamer* vs = ctx->server->getVideoStreamer();
-    if (!vs) {
+    ColorTracker* ct = ctx->server->getColorTracker();
+    if (!ct) {
         return false;
     }
-    return vs->isFrozen();
+    return ct->isFrozen();
 }
 
 uint8_t* httpd_video_get_rgb_buffer(httpd_handle_t handle, uint32_t* width, uint32_t* height) {
-    if (!handle) {
-        return NULL;
-    }
-    auto ctx = (httpd_server_context*)handle;
-    VideoStreamer* vs = ctx->server->getVideoStreamer();
-    if (!vs || !vs->isFrozen()) {
-        return NULL;
-    }
-    if (width) *width = vs->getWidth();
-    if (height) *height = vs->getHeight();
-    return vs->getRgbBuffer();
+    // Note: Direct RGB buffer access is no longer supported.
+    // The ColorTracker owns its own frozen frame buffer internally.
+    // This function is kept for API compatibility but returns NULL.
+    (void)handle;
+    (void)width;
+    (void)height;
+    ESP_LOGW(TAG, "httpd_video_get_rgb_buffer is deprecated - use ColorTracker API");
+    return NULL;
 }
 
 } // extern "C"
