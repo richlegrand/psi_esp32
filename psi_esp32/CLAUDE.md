@@ -761,4 +761,146 @@ Browser                                    ESP32
 - Refactor for clarity before adding freeze mode logic
 
 ---
-*Last updated: 2026-01-24 - Added HueTrack porting plan, PSI signaling architecture documentation, runtime video source auto-detection, flash I/O safety guidelines, lazy initialization pattern*
+
+## PLANNED: Browser-Side Overlay Synchronization
+
+### Overview
+
+Render tracking overlays (rectangles, crosshairs) on the browser side synchronized with video, instead of burning them into the video stream. This allows browser-controlled visualization and avoids permanent modification of the video.
+
+### Timestamp Correlation
+
+ESP32's relative PTS and browser's `mediaTime` from `requestVideoFrameCallback` should align:
+
+| ESP32 | Browser |
+|-------|---------|
+| `(esp_timer_get_time() - video_start_pts_) / 1000000.0` | `metadata.mediaTime` |
+
+Both measure seconds since stream start.
+
+### Architecture
+
+```
+VideoStreamer::processFrameCV()
+    │
+    │ current_frame_pts_ = (now - start) / 1e6
+    │
+    └─► frame_callback_(input)              // ColorTracker::onFrame()
+            │
+            │ Detects contours
+            │ Calls sendOverlay({objects:[...]})
+            │
+            └─► VideoStreamer::sendOverlay()
+                    │
+                    │ Adds current_frame_pts_ to JSON
+                    │ Sends via DataChannel
+                    ▼
+                Browser receives {type:"track", pts:1.234, objects:[...]}
+```
+
+### ESP32 Implementation
+
+**VideoStreamer** (owns PTS, sends overlay data):
+```cpp
+// video_streamer.hpp
+void sendOverlay(const std::string& json_data);
+double current_frame_pts_ = 0;
+
+// video_streamer.cpp
+void VideoStreamer::sendOverlay(const std::string& json_data) {
+    char buf[512];
+    snprintf(buf, sizeof(buf),
+        "{\"type\":\"track\",\"pts\":%.3f,\"data\":%s}",
+        current_frame_pts_, json_data.c_str());
+
+    for (auto& [client_id, dc] : data_channels_) {
+        if (dc && dc->isOpen()) dc->send(buf);
+    }
+}
+
+// In processFrameCV(), before calling callback:
+current_frame_pts_ = (esp_timer_get_time() - video_start_pts_) / 1000000.0;
+```
+
+**ColorTracker** (produces overlay data, no timestamp awareness):
+```cpp
+// color_tracker.hpp
+void setOverlaySender(std::function<void(const std::string&)> fn);
+
+// color_tracker.cpp - in onFrame() after tracking:
+if (tracking_enabled_ && !contours_.empty() && send_overlay_) {
+    std::string json = formatContoursJson(contours_);
+    send_overlay_(json);
+}
+```
+
+### Browser Implementation
+
+**Canvas overlay with `requestVideoFrameCallback`**:
+```javascript
+const trackingBuffer = [];
+const MAX_BUFFER = 30;
+
+// Receive tracking data
+dataChannel.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'track') {
+        trackingBuffer.push(msg);
+        if (trackingBuffer.length > MAX_BUFFER) trackingBuffer.shift();
+    }
+};
+
+// Find data matching video time
+function findTrackingData(mediaTimeMs) {
+    let best = null;
+    for (const t of trackingBuffer) {
+        if (t.pts * 1000 <= mediaTimeMs + 100) {  // 100ms tolerance
+            if (!best || t.pts > best.pts) best = t;
+        }
+    }
+    return best;
+}
+
+// Render synchronized with video frames
+video.requestVideoFrameCallback(function onFrame(now, metadata) {
+    const tracking = findTrackingData(metadata.mediaTime * 1000);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (tracking?.data?.objects) {
+        ctx.strokeStyle = 'lime';
+        for (const obj of tracking.data.objects) {
+            ctx.strokeRect(
+                obj.x * canvas.width, obj.y * canvas.height,
+                obj.w * canvas.width, obj.h * canvas.height
+            );
+        }
+    }
+
+    video.requestVideoFrameCallback(onFrame);
+});
+```
+
+### Browser Support
+
+`requestVideoFrameCallback` has ~95% global support (Chrome 83+, Firefox 132+, Safari 15.4+).
+
+Fallback for older browsers:
+```javascript
+if (!('requestVideoFrameCallback' in HTMLVideoElement.prototype)) {
+    // Use requestAnimationFrame + video.currentTime (less accurate)
+}
+```
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `main/video_streamer.hpp` | Add `sendOverlay()`, `current_frame_pts_` |
+| `main/video_streamer.cpp` | Store PTS before callback, implement `sendOverlay()` |
+| `main/color_tracker.hpp` | Add `setOverlaySender()` callback |
+| `main/color_tracker.cpp` | Call overlay sender after tracking |
+| `main/httpd_server.cpp` | Wire up overlay sender |
+| `media_files/static/app.js` | Add canvas overlay, tracking buffer, frame callback |
+
+---
+*Last updated: 2026-01-26 - Added browser-side overlay synchronization plan*

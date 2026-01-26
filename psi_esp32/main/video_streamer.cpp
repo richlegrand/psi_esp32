@@ -1158,7 +1158,7 @@ bool VideoStreamer::processFrameDirect(const AcquiredFrame& frame) {
 
     // === PPA is now running in hardware ===
     // Do test processing while waiting (PSRAM bandwidth test)
-    testProcessing();
+    //testProcessing();
 
     // Wait for PPA to complete
     if (xSemaphoreTake(ppa_done_sem_, pdMS_TO_TICKS(100)) != pdTRUE) {
